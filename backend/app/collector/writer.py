@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -17,6 +18,8 @@ from app.common.models import RoleName
 log = logging.getLogger(__name__)
 
 DEFAULT_PRIORITY = 8
+# Une commande plus vieille que ça n'est pas exécutée : l'opérateur a déjà reçu un échec.
+MAX_COMMAND_AGE_S = 30.0
 WRITER_ROLES = {RoleName.OPERATOR.value, RoleName.ENGINEER.value, RoleName.ADMIN.value}
 
 
@@ -28,12 +31,14 @@ class Writer:
         redis: Any,
         on_reading: Callable[[Reading], Awaitable[None]] | None = None,
         consumer: str = "collector-1",
+        max_command_age_s: float = MAX_COMMAND_AGE_S,
     ) -> None:
         self._driver = driver
         self._store = store
         self._redis = redis
         self._on_reading = on_reading
         self._consumer = consumer
+        self._max_age_s = max_command_age_s
 
     async def run(self) -> None:
         try:
@@ -81,7 +86,11 @@ class Writer:
         user_id = uuid.UUID(str(command["user_id"])) if command.get("user_id") else None
 
         target = await self._store.get_write_target(point_id)
-        refusal = await self._refusal(target, value, priority, user_id)
+        issued_at = command.get("issued_at")
+        if issued_at is not None and time.time() - float(issued_at) > self._max_age_s:
+            refusal: str | None = "commande expirée"
+        else:
+            refusal = await self._refusal(target, value, priority, user_id)
         before = {"value": target.last_value} if target else None
         after: dict[str, Any] = {"value": value, "priority": priority}
         result = WriteResult(False, refusal)

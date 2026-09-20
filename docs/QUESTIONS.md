@@ -45,3 +45,30 @@ Décisions prises par défaut (option la plus simple) faute de précision dans S
     réglage n'existe encore dans l'interface : à modifier en base jusqu'au Jalon 3.
 15. **Écritures BACnet sur objets non commandables** : les objets sans priority-array (ex. multi-state
     value du simulateur) reçoivent l'écriture directement, la priorité étant ignorée par le device.
+
+## Jalon 3
+
+16. **Création des utilisateurs** : pas d'API `/users` ni `/roles` à ce stade (prévue avec l'administration).
+    Le premier compte se crée en ligne de commande :
+    `docker compose exec api python -m app.auth.cli create-user admin --role admin`
+    (mot de passe demandé, ou variable `NEW_USER_PASSWORD`). Mot de passe : 10 caractères minimum.
+17. **Session** : deux cookies `HttpOnly` + `SameSite=Strict` (+ `Secure` par défaut) : `access_token`
+    (15 min, envoyé à `/api`) et `refresh_token` (7 jours, envoyé seulement à `/api/v1/auth`).
+    `POST /auth/refresh` renouvelle les deux. Les JWT sont sans état : la déconnexion efface les cookies
+    mais ne révoque pas un jeton déjà copié (il expire en 15 min). L'utilisateur est rechargé en base à
+    chaque requête : un compte désactivé perd l'accès immédiatement.
+18. **Verrouillage après 5 échecs** : prévu au Jalon 7 avec le reste du durcissement ; les échecs de
+    connexion sont déjà tracés dans `audit_log`.
+19. **Écriture** : `POST /points/{id}/write` envoie la commande dans le stream `cmd.write` et attend le
+    résultat du collecteur (10 s, `WRITE_TIMEOUT_S`). Codes : 403 rôle, 404 point, 409 non inscriptible,
+    422 hors bornes, 502 refus du contrôleur, 504 collecteur muet. Une commande porte `issued_at` et le
+    collecteur refuse celles de plus de 30 s : une écriture ayant expiré côté API ne s'exécute pas
+    plus tard. L'API trace ses propres refus, le collecteur trace les tentatives qui le concernent.
+20. **WebSocket** : authentifié par le cookie d'accès ; la connexion est fermée avec le code 4401 quand
+    le jeton expire (le client renouvelle puis se reconnecte). Ping serveur toutes les 30 s (uvicorn) et
+    `{"action":"ping"}` -> `{"type":"pong"}` côté application. Les messages d'alarme (`alarm.event`) sont
+    déjà relayés ; le moteur d'alarmes arrive au Jalon 5.
+21. **Historique** : agrégation par `date_bin` (PostgreSQL 14+), donc sans TimescaleDB ; le Jalon 4
+    passera à `time_bucket` et aux agrégats continus. Maximum 20 000 lignes par réponse.
+22. **Pas encore fait** : `POST /discovery/run` (nécessite un canal de commande vers le collecteur) et
+    `docs/API.md` (généré depuis OpenAPI en fin de projet ; la doc interactive est sur `/api/docs`).

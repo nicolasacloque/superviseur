@@ -30,6 +30,13 @@ class Settings(BaseSettings):
 
     bacnet_bind_ip: str | None = None
 
+    # Authentification et écriture (section 11).
+    cookie_secure: bool = True
+    access_token_minutes: int = 15
+    refresh_token_days: int = 7
+    # Délai d'attente de la réponse du collecteur à une écriture de consigne.
+    write_timeout_s: float = 10.0
+
 
 @lru_cache
 def get_settings() -> Settings:

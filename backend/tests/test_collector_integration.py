@@ -5,7 +5,6 @@ import contextlib
 import json
 import time
 import uuid
-from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -17,26 +16,9 @@ from app.collector.poller import Poller
 from app.collector.writer import Writer
 from app.common.bus import point_value_channel
 from app.db.models import AuditLog, Device, Point, PointLatest, Role, User
-from tests.harness import Harness, build_harness
 from tests.helpers import wait_until
 
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture
-async def harness_factory(
-    sessions: async_sessionmaker[AsyncSession], redis: Any
-) -> AsyncIterator[Any]:
-    created: list[Harness] = []
-
-    async def factory(**kwargs: Any) -> Harness:
-        harness = await build_harness(sessions, redis, **kwargs)
-        created.append(harness)
-        return harness
-
-    yield factory
-    for harness in created:
-        await harness.close()
 
 
 async def count(sessions: async_sessionmaker[AsyncSession], model: Any, *where: Any) -> int:

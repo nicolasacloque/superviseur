@@ -51,13 +51,15 @@ jobs:
       - run: pytest --cov=app --cov-report=term-missing
 
   stack:
-    # Critères d'acceptation du Jalon 2 sur la vraie stack Docker, avec le simulateur.
+    # Critères d'acceptation des Jalons 2 et 3 sur la vraie stack Docker, avec le simulateur.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Préparer .env
         run: |
           cp .env.example .env
+          echo "JWT_SECRET=$(openssl rand -hex 32)" >> .env
+          echo "COOKIE_SECURE=false" >> .env
           echo "COLLECTOR_CONFIG=/config/collector.sim.yaml" >> .env
       - name: Démarrer la stack avec le simulateur
         run: docker compose --profile sim up -d --build --wait --wait-timeout 240
@@ -79,6 +81,32 @@ jobs:
         run: |
           out=$(docker compose exec -T redis redis-cli --raw psubscribe 'point.value.*' | head -n 6 || true)
           echo "$out" | grep -q 'pmessage'
+      - name: "API - connexion, lecture, écriture avec priorité, relâchement, refus"
+        run: |
+          B=http://127.0.0.1:8000/api/v1
+          PW=mot-de-passe-ci-123
+          for spec in "ci-op operator" "ci-viewer viewer"; do
+            set -- $spec
+            docker compose exec -T -e NEW_USER_PASSWORD=$PW api python -m app.auth.cli create-user "$1" --role "$2"
+          done
+          login() { curl -fsS -c "$1.jar" -H 'Content-Type: application/json' \
+            -d "{\"login\":\"$1\",\"password\":\"$PW\"}" $B/auth/login > /dev/null; }
+          login ci-op
+          login ci-viewer
+          test "$(curl -s -o /dev/null -w '%{http_code}' $B/points)" = 401
+          POINT=$(curl -fsS -b ci-op.jar "$B/points?writable=true&q=-AV-&limit=1" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['items'][0]['id'])")
+          write() { curl -s -o /dev/null -w '%{http_code}' -b "$1.jar" -H 'Content-Type: application/json' \
+            -d "$2" $B/points/$POINT/write; }
+          test "$(write ci-op '{"value":42.5,"priority":8}')" = 200
+          test "$(write ci-viewer '{"value":10,"priority":8}')" = 403
+          for i in $(seq 1 15); do
+            value=$(curl -fsS -b ci-op.jar $B/points/$POINT | python3 -c "import sys,json; print(json.load(sys.stdin)['latest']['value'])")
+            [ "$value" = "42.5" ] && break
+            sleep 1
+          done
+          test "$value" = "42.5"
+          test "$(write ci-op '{"value":null,"priority":8}')" = 200
       - name: Logs en cas d'échec
         if: failure()
         run: docker compose --profile sim logs --tail 200

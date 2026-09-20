@@ -18,6 +18,8 @@ dependencies = [
     "redis>=5.2,<7",
     "bacpypes3>=0.0.102",
     "pyyaml>=6",
+    "argon2-cffi>=23",
+    "pyjwt>=2.8",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +31,7 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "fakeredis>=2.26",
+    "websockets>=13",
     "types-PyYAML",
 ]
 
@@ -61,3 +64,8 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 markers = ["integration: nécessite le simulateur BACnet, une base PostgreSQL et Redis"]
+
+[tool.coverage.run]
+source = ["app"]
+# SQLAlchemy asynchrone exécute le code dans des greenlets : sans cela, coverage les ignore.
+concurrency = ["greenlet", "thread"]

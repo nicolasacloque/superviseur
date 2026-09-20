@@ -23,5 +23,5 @@ Stack complète : `cp .env.example .env` puis `docker compose up -d --build --wa
 
 ## État
 
-Jalons 1 (Socle) et 2 (simulateur + collecteur) livrés ; le Jalon 3 (API, WebSocket, écriture) n'est pas commencé.
+Jalons 1 (Socle), 2 (simulateur + collecteur) et 3 (API, WebSocket, écriture) livrés ; le Jalon 4 n'est pas commencé.
 Voir README.md et docs/QUESTIONS.md.

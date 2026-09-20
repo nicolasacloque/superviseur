@@ -115,3 +115,16 @@ async def test_malformed_command_is_acknowledged_without_crashing(redis: Any) ->
     await writer.process(message_id, fields)
     assert driver.writes == []
     assert (await redis.xpending(STREAM_WRITE, WRITE_GROUP))["pending"] == 0
+
+
+async def test_expired_command_is_refused(redis: Any) -> None:
+    import time
+
+    writer, store, driver, point_id = make_writer(redis)
+    result = await writer.execute(command(point_id, issued_at=time.time() - 60))
+    assert not result.ok and "expirée" in (result.error or "")
+    assert driver.writes == []
+    assert store.audit[0][4]["result"] == "commande expirée"
+
+    fresh = await writer.execute(command(point_id, issued_at=time.time()))
+    assert fresh.ok
