@@ -1,0 +1,83 @@
+# Jalon 1 : db, redis, api. Les services collector, alarms et nginx arrivent aux jalons suivants.
+# Les mots de passe viennent du fichier .env (copier .env.example) ; rien n'est en dur ici.
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  db:
+    <<: *restart
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?voir .env.example}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?voir .env.example}
+      POSTGRES_DB: ${POSTGRES_DB:?voir .env.example}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [back]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    <<: *restart
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    networks: [back]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    <<: *restart
+    build: ./backend
+    # Les migrations sont appliquées avant le démarrage de l'API.
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && exec uvicorn app.api.main:app --host 0.0.0.0 --port 8000
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      RETENTION_DAYS: ${RETENTION_DAYS:-730}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Publie uniquement en local en attendant Nginx + TLS (Jalon 7).
+    ports:
+      - "127.0.0.1:8000:8000"
+    # Le réseau back est interne : api doit aussi être sur front pour publier son port.
+    networks: [front, back]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+networks:
+  front:
+  back:
+    internal: true
+
+volumes:
+  pgdata:
+  redisdata:
