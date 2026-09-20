@@ -1,0 +1,20 @@
+# Configuration pour le simulateur : `COLLECTOR_CONFIG=/config/collector.sim.yaml`
+# puis `docker compose --profile sim up -d --build`.
+network:
+  name: "simulateur"
+  bind_ip: "127.0.0.1"
+  port: 47808
+  device_instance: 599999
+discovery:
+  timeout_s: 3
+  interval_s: 3600
+  # 10 devices, un par port UDP.
+  targets: ["127.0.0.1:47809-47818"]
+polling:
+  default_interval_s: 30
+  batch_size: 20
+  max_concurrent_requests: 5
+  timeout_s: 3
+  retries: 1
+cov:
+  enabled: true

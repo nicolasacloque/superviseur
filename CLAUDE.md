@@ -12,7 +12,7 @@ Le cahier des charges complet est dans [SPEC.md](SPEC.md) : le lire en entier av
 ## Commandes (depuis `backend/`)
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ../simulator -e ".[dev]"
 ruff check . && ruff format --check .
 mypy
 pytest                       # tests unitaires
@@ -23,4 +23,5 @@ Stack complète : `cp .env.example .env` puis `docker compose up -d --build --wa
 
 ## État
 
-Jalon 1 (Socle) livré, en attente de validation. Voir README.md.
+Jalons 1 (Socle) et 2 (simulateur + collecteur) livrés ; le Jalon 3 (API, WebSocket, écriture) n'est pas commencé.
+Voir README.md et docs/QUESTIONS.md.

@@ -24,34 +24,64 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     env:
       TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/supervisor_test
+      TEST_REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/pyproject.toml
-      - run: pip install -e ".[dev]"
-      - run: ruff check .
-      - run: ruff format --check .
+          cache-dependency-path: |
+            backend/pyproject.toml
+            simulator/pyproject.toml
+      - run: pip install -e ../simulator -e ".[dev]"
+      - run: ruff check . ../simulator
+      - run: ruff format --check . ../simulator
       - run: mypy
       - run: pytest --cov=app --cov-report=term-missing
 
-  compose:
+  stack:
+    # Critères d'acceptation du Jalon 2 sur la vraie stack Docker, avec le simulateur.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Préparer .env
-        run: cp .env.example .env
-      - name: Démarrer la stack
-        run: docker compose up -d --build --wait --wait-timeout 180
+        run: |
+          cp .env.example .env
+          echo "COLLECTOR_CONFIG=/config/collector.sim.yaml" >> .env
+      - name: Démarrer la stack avec le simulateur
+        run: docker compose --profile sim up -d --build --wait --wait-timeout 240
       - name: Vérifier /health
         run: curl -fsS http://127.0.0.1:8000/health
+      - name: Attendre l'import des 2000 points
+        run: |
+          query() { docker compose exec -T db psql -U supervisor -d supervisor -tAc "$1"; }
+          for i in $(seq 1 60); do
+            points=$(query "select count(*) from point_latest" || echo 0)
+            echo "point_latest: ${points}"
+            [ "${points:-0}" -ge 2000 ] && break
+            sleep 5
+          done
+          test "$(query 'select count(*) from device')" = 10
+          test "$(query 'select count(*) from point')" = 2000
+          test "$(query 'select count(*) from point_latest')" -ge 2000
+      - name: Vérifier la publication Redis
+        run: |
+          out=$(docker compose exec -T redis redis-cli --raw psubscribe 'point.value.*' | head -n 6 || true)
+          echo "$out" | grep -q 'pmessage'
       - name: Logs en cas d'échec
         if: failure()
-        run: docker compose logs
+        run: docker compose --profile sim logs --tail 200
       - name: Arrêter la stack
         if: always()
-        run: docker compose down -v
+        run: docker compose --profile sim down -v

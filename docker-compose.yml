@@ -1,4 +1,5 @@
-# Jalon 1 : db, redis, api. Les services collector, alarms et nginx arrivent aux jalons suivants.
+# Jalons 1-2 : db, redis, api, collector (+ simulateur avec `--profile sim`).
+# Les services alarms et nginx arrivent aux jalons suivants.
 # Les mots de passe viennent du fichier .env (copier .env.example) ; rien n'est en dur ici.
 
 x-restart: &restart
@@ -14,7 +15,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?voir .env.example}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    networks: [back]
+    # Le collecteur (réseau hôte) joint la base sur la boucle locale de l'hôte.
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks: [back, hostpub]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -27,7 +31,9 @@ services:
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redisdata:/data
-    networks: [back]
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks: [back, hostpub]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -73,10 +79,50 @@ services:
       retries: 6
       start_period: 30s
 
+  # Seul composant qui parle BACnet. Réseau hôte : il reçoit les broadcasts du bon sous-réseau.
+  collector:
+    <<: *restart
+    build: ./backend
+    command: ["python", "-m", "app.collector.main"]
+    network_mode: host
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}
+      REDIS_URL: redis://127.0.0.1:6379/0
+      COLLECTOR_CONFIG: ${COLLECTOR_CONFIG:-/config/collector.yaml}
+      BACNET_BIND_IP: ${BACNET_BIND_IP:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./config:/config:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os,sys,time; sys.exit(0 if time.time()-os.path.getmtime('/tmp/collector.alive')<60 else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+
+  # Simulateur BACnet (10 devices x 200 points) : `docker compose --profile sim up`.
+  simulator:
+    <<: *restart
+    profiles: [sim]
+    build: ./simulator
+    network_mode: host
+    environment:
+      SIM_HOST: 127.0.0.1
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
 networks:
   front:
   back:
     internal: true
+  # Réseau non interne, uniquement pour publier db et redis sur 127.0.0.1 (jamais hors du serveur).
+  hostpub:
 
 volumes:
   pgdata:

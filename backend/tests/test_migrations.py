@@ -44,6 +44,7 @@ async def engine() -> AsyncIterator[AsyncEngine]:
     # env.py lance sa propre boucle asyncio : on l'exécute dans un thread.
     await asyncio.to_thread(command.downgrade, config, "base")
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)  # tables laissées par d'autres tests
         await conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
     yield engine
     await engine.dispose()
