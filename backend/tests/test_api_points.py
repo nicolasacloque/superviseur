@@ -121,3 +121,37 @@ async def test_history_raw_and_bucketed(env: Any) -> None:
     huge = {"from": "2000-01-01T00:00:00Z", "to": "2030-01-01T00:00:00Z", "bucket": "1s"}
     assert (await client.get(f"/points/{point_id}/history", params=huge)).status_code == 422
     assert (await client.get(f"/points/{uuid.uuid4()}/history")).status_code == 404
+
+
+async def test_history_auto_bucket_targets_the_requested_number_of_points(env: Any) -> None:
+    client, ids, sessions = env
+    point_id = ids["Temp soufflage"]
+    start = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(hours=3)
+    async with sessions() as session, session.begin():
+        session.add_all(
+            Sample(
+                point_id=point_id, ts=start + timedelta(minutes=10 * i), value=float(i), status="ok"
+            )
+            for i in range(12)
+        )
+    window = {"from": start.isoformat(), "to": (start + timedelta(hours=2)).isoformat()}
+
+    # 2 h en 10 tranches visées : 720 s minimum, donc la tranche ronde de 15 min.
+    auto = (
+        await client.get(
+            f"/points/{point_id}/history", params={**window, "bucket": "auto", "max_points": 10}
+        )
+    ).json()
+    assert auto["bucket"] == "15m"
+    assert len(auto["items"]) <= 10 and sum(i["count"] for i in auto["items"]) == 12
+
+    # Peu de points à afficher : on renvoie les échantillons bruts.
+    short = {"from": start.isoformat(), "to": (start + timedelta(seconds=300)).isoformat()}
+    raw = (
+        await client.get(f"/points/{point_id}/history", params={**short, "bucket": "auto"})
+    ).json()
+    assert raw["bucket"] is None and len(raw["items"]) == 1
+
+    assert (
+        await client.get(f"/points/{point_id}/history", params={"bucket": "auto", "max_points": 5})
+    ).status_code == 422

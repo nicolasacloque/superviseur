@@ -42,6 +42,16 @@ class WriteTarget:
     last_value: float | None
 
 
+@dataclass(frozen=True)
+class PointSettings:
+    """Réglage d'un point modifiable depuis l'API."""
+
+    deadband: float
+    max_interval_s: int
+    poll_interval_s: int | None
+    path: str | None
+
+
 class Store(Protocol):
     async def ensure_network(self, config: NetworkConfig) -> uuid.UUID: ...
 
@@ -68,6 +78,8 @@ class Store(Protocol):
     ) -> None: ...
 
     async def get_write_target(self, point_id: uuid.UUID) -> WriteTarget | None: ...
+
+    async def get_point_settings(self, point_id: uuid.UUID) -> PointSettings | None: ...
 
     async def get_user_role(self, user_id: uuid.UUID) -> str | None: ...
 
@@ -272,6 +284,15 @@ class DbStore:
             point.id, device.instance, device.address, point.object_type, point.object_instance
         )
         return WriteTarget(ref, point.writable, point.write_min, point.write_max, point.path, last)
+
+    async def get_point_settings(self, point_id: uuid.UUID) -> PointSettings | None:
+        async with self._sessions() as session:
+            point = await session.get(Point, point_id)
+        if point is None:
+            return None
+        return PointSettings(
+            point.deadband, point.max_interval_s, point.poll_interval_s, point.path
+        )
 
     async def get_user_role(self, user_id: uuid.UUID) -> str | None:
         async with self._sessions() as session:

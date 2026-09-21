@@ -12,6 +12,7 @@ from redis.asyncio import Redis
 
 from app.collector.bacnet_driver import BacnetDriver
 from app.collector.config import CollectorConfig, load_config
+from app.collector.config_sync import PointConfigSync
 from app.collector.cov import CovManager
 from app.collector.discovery import run_discovery
 from app.collector.poller import Poller
@@ -76,7 +77,15 @@ async def run(config: CollectorConfig) -> None:
 
     poller = Poller(driver, registry, recorder, store, redis, config.polling, config.cov)
     writer = Writer(driver, store, redis, on_reading=recorder.handle)
-    jobs = [_heartbeat(), recorder.run(), poller.run(), writer.run(), rediscover()]
+    config_sync = PointConfigSync(store, redis, registry, config.polling.default_interval_s)
+    jobs = [
+        _heartbeat(),
+        recorder.run(),
+        poller.run(),
+        writer.run(),
+        rediscover(),
+        config_sync.run(),
+    ]
     if config.cov.enabled:
         jobs.append(CovManager(driver, registry, config.cov).run())
     tasks = [asyncio.create_task(job) for job in jobs]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -84,6 +84,22 @@ class PointPage(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class PointUpdate(BaseModel):
+    """Réglage d'un point ; les champs absents restent inchangés, `null` efface (si permis)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str | None = Field(default=None, max_length=512)
+    deadband: float | None = Field(default=None, ge=0)
+    max_interval_s: int | None = Field(default=None, ge=1, le=86400)
+    poll_interval_s: int | None = Field(default=None, ge=1, le=86400)
+    write_min: float | None = None
+    write_max: float | None = None
+    tags: list[Annotated[str, Field(min_length=1, max_length=64)]] | None = Field(
+        default=None, max_length=32
+    )
 
 
 class HistoryItem(BaseModel):

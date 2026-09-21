@@ -19,7 +19,7 @@ from app.collector.driver_base import (
     WriteResult,
 )
 from app.collector.registry import DeviceState, PointState, Registry
-from app.collector.store import WriteTarget
+from app.collector.store import PointSettings, WriteTarget
 
 
 class FakeStore:
@@ -31,6 +31,7 @@ class FakeStore:
         self.roles: dict[uuid.UUID, str] = {}
         self.targets: dict[uuid.UUID, WriteTarget] = {}
         self.fail_writes = False
+        self.settings: dict[uuid.UUID, PointSettings] = {}
 
     async def ensure_network(self, config: NetworkConfig) -> uuid.UUID:
         return uuid.uuid4()
@@ -68,6 +69,9 @@ class FakeStore:
 
     async def get_write_target(self, point_id: uuid.UUID) -> WriteTarget | None:
         return self.targets.get(point_id)
+
+    async def get_point_settings(self, point_id: uuid.UUID) -> PointSettings | None:
+        return self.settings.get(point_id)
 
     async def get_user_role(self, user_id: uuid.UUID) -> str | None:
         return self.roles.get(user_id)

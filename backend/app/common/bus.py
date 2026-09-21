@@ -8,6 +8,8 @@ STREAM_WRITE = "cmd.write"
 WRITE_GROUP = "collector"
 CHANNEL_DEVICE_STATUS = "device.status"
 CHANNEL_ALARM_EVENT = "alarm.event"
+# Réglage d'un point modifié (deadband, intervalles) : le collecteur le recharge à chaud.
+CHANNEL_POINT_CONFIG = "point.config"
 
 
 def point_value_channel(point_id: uuid.UUID | str) -> str:

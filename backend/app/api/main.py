@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -16,6 +17,9 @@ from app.api.routes import audit, auth, devices, points, write, ws
 from app.common.config import Settings, get_settings
 from app.common.logging import configure_logging
 from app.db.session import create_engine, create_session_factory
+from app.db.timescale import has_timescale, sync_retention
+
+log = logging.getLogger(__name__)
 
 
 def create_app(
@@ -37,6 +41,12 @@ def create_app(
         app.state.engine = own_engine
         app.state.redis = own_redis
         app.state.sessions = create_session_factory(own_engine)
+        app.state.use_time_bucket = False
+        try:
+            app.state.use_time_bucket = await has_timescale(own_engine)
+            await sync_retention(own_engine, resolved.retention_days)
+        except Exception:
+            log.exception("politiques TimescaleDB non appliquées")
         try:
             yield
         finally:
