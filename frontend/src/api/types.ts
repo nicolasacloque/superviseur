@@ -1,3 +1,5 @@
+import type { SynopticDoc } from '../synoptic/model'
+
 /** Contrats partagés entre l'API REST, le WebSocket et les widgets. */
 
 export interface HistoryItem {
@@ -30,6 +32,66 @@ export interface PointInfo {
   name: string
   unit: string | null
   path: string | null
+  object_type?: string
+  writable?: boolean
+  write_min?: number | null
+  write_max?: number | null
+  /** Libellés d'un multi-état (index 1 = premier libellé). */
+  state_text?: string[] | null
+  tags?: string[]
+  latest?: { ts: string; value: number | null; status: string } | null
+}
+
+export interface PointTree {
+  path: string
+  folders: { name: string; path: string; count: number }[]
+  points: PointInfo[]
+}
+
+export interface PointsApi {
+  point(pointId: string): Promise<PointInfo>
+  tree(path: string): Promise<PointTree>
+  search(query: string, limit?: number): Promise<PointInfo[]>
+}
+
+export interface WriteApi {
+  /** Écrit `present-value` ; `null` relâche la priorité. */
+  write(pointId: string, value: number | null, priority: number): Promise<void>
+}
+
+export interface SynopticSummary {
+  id: string
+  name: string
+  slug: string
+  version: number
+  updated_at: string
+}
+
+export interface SynopticRecord extends SynopticSummary {
+  doc: SynopticDoc
+}
+
+export interface VersionInfo {
+  version: number
+  created_at: string
+  created_by: string | null
+}
+
+export interface SynopticsApi {
+  synoptics(): Promise<SynopticSummary[]>
+  synoptic(slug: string): Promise<SynopticRecord>
+  createSynoptic(doc: SynopticDoc, slug?: string): Promise<SynopticRecord>
+  saveSynoptic(id: string, doc: SynopticDoc, baseVersion?: number): Promise<SynopticRecord>
+  deleteSynoptic(id: string): Promise<void>
+  versions(slug: string): Promise<VersionInfo[]>
+  version(slug: string, version: number): Promise<SynopticRecord>
+  restoreVersion(id: string, version: number): Promise<SynopticRecord>
+}
+
+export interface SessionUser {
+  id: string
+  login: string
+  role: string
 }
 
 export interface HistoryApi {

@@ -152,3 +152,45 @@ Décisions prises par défaut (option la plus simple) faute de précision dans S
 39. **Dépendances d'exécution** : `httpx` (webhooks) est une dépendance du service, pas seulement des tests.
     Un job CI installe le paquet seul dans un environnement vierge et importe l'API et les services : l'image
     Docker n'a pas les outils de test, et une dépendance manquante n'apparaît sinon qu'au démarrage.
+
+## Jalon 6
+
+40. **Format du synoptique** : JSON `schema: 1` (`name`, `canvas`, `widgets`, `links`). Les propriétés
+    propres à un type de widget sont acceptées telles quelles (l'éditeur les génère depuis le schéma du
+    widget) ; le serveur vérifie les types, les identifiants uniques, les coordonnées finies, au plus
+    500 widgets et 6 Mo par document. Les valeurs de style sont limitées à une liste de propriétés CSS
+    et refusent `url(`, `expression`, `@import`, `javascript:` et les caractères `; { } < > \` : un synoptique
+    ne peut ni déclencher de requête ni injecter de CSS.
+41. **Image de fond et widget `image`** : intégrées au JSON en `data:` base64 (PNG, JPEG, WebP, SVG),
+    5 Mo au plus par image. Le CDC ne prévoit pas de stockage de fichiers ; c'est l'option la plus simple
+    et elle rend chaque version autonome. Contrepartie : un document avec images pèse vite plusieurs Mo.
+42. **Versions** : chaque enregistrement crée une version ; `base_version` obsolète → 409 (l'éditeur
+    affiche le conflit sans écraser). Restaurer la version N **crée** une nouvelle version identique à N,
+    l'historique n'est jamais réécrit. Créer, modifier, restaurer et supprimer sont réservés aux
+    ingénieurs et inscrits dans `audit_log` ; la liste des synoptiques et leur dernière version sont lisibles
+    par tout compte connecté, l'historique des versions par les ingénieurs seulement.
+43. **Slug** : dérivé du nom (minuscules, chiffres, tirets) et suffixé `-2`, `-3`… s'il est pris ; il ne
+    change pas quand on renomme le synoptique, pour que les liens et les favoris restent valables.
+44. **Navigation** : un widget `link` ou un lien posé sur un autre widget (`links[]`) désigne le slug du
+    synoptique cible. Un lien vers un synoptique supprimé mène à la page « introuvable » ; le serveur ne
+    vérifie pas l'existence de la cible à l'enregistrement (elle peut être créée ensuite).
+45. **Expressions de règles** : grammaire fermée (identifiants `value` et `status`, littéraux, opérateurs
+    `&& || ! == != < <= > >= + - * / %`, ou `and or not`). Un analyseur descendant récursif existe en
+    Python et en TypeScript, pas d'`eval` ; les deux lisent le même fichier de cas
+    (`frontend/src/synoptic/expression_cases.json`) pour rester équivalents. Une règle invalide est refusée
+    à l'enregistrement ; à l'affichage, une règle qui échoue est ignorée.
+46. **Viewer** : le canevas est mis à l'échelle pour tenir entièrement dans la fenêtre, sans déformation
+    (bandes sombres sur les rapports d'aspect différents, par exemple une tablette en portrait). Les
+    mises à jour temps réel sont regroupées (100 ms au plus entre deux rafraîchissements). Tant que le
+    WebSocket est coupé, le synoptique est grisé ; les valeurs reviennent à la reconnexion. Les commandes (`switch`, `setpoint`) demandent une confirmation et exigent le rôle
+    operator ; l'API revérifie le rôle et les bornes.
+47. **Application web servie par l'API** (`FRONTEND_DIR`) : l'image Docker embarque le build du frontend
+    et l'API le monte en dernier, après ses propres routes. Nginx (Jalon 7) pourra servir les fichiers
+    statiques directement ; la variable vide désactive le montage. Le routage se fait par fragment
+    (`#/view/<slug>`) : aucune réécriture d'URL côté serveur.
+48. **Arborescence des points** : `GET /points/tree?path=` renvoie les dossiers du niveau (avec leur
+    nombre de points) et les points de ce niveau ; les points sans chemin sont regroupés sous
+    « (sans chemin) ». Le sélecteur de l'éditeur s'en sert, ou bascule sur la recherche si l'on tape.
+49. **Tests Playwright** : exécutés dans le job CI `stack`, sur la stack Docker réelle et le simulateur,
+    en série (un seul simulateur partagé). Chaque scénario crée ses propres synoptiques et les supprime.
+    Le rapport `github` annote les échecs ; captures et traces sont déposées en artefact.

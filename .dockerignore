@@ -1,0 +1,15 @@
+*.pyc
+.coverage
+.env
+.git/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+__pycache__/
+backend/tests/
+docs/
+frontend/dist/
+frontend/node_modules/
+node_modules/
+tests/

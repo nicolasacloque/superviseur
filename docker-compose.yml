@@ -1,4 +1,4 @@
-# Jalons 1-5 : db, redis, api, collector, alarms (+ simulateur avec `--profile sim`).
+# Jalons 1-6 : db, redis, api (sert aussi le frontend), collector, alarms (+ simulateur avec `--profile sim`).
 # Le service nginx arrive au Jalon 7.
 # Les mots de passe viennent du fichier .env (copier .env.example) ; rien n'est en dur ici.
 
@@ -42,7 +42,9 @@ services:
 
   api:
     <<: *restart
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     # Les migrations sont appliquées avant le démarrage de l'API.
     command:
       - sh
@@ -87,7 +89,9 @@ services:
   # Seul composant qui parle BACnet. Réseau hôte : il reçoit les broadcasts du bon sous-réseau.
   collector:
     <<: *restart
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     command: ["python", "-m", "app.collector.main"]
     network_mode: host
     environment:
@@ -115,7 +119,9 @@ services:
   # Moteur d'alarmes : règles, machine à états, notifications email et webhook.
   alarms:
     <<: *restart
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     command: ["python", "-m", "app.alarms.main"]
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}

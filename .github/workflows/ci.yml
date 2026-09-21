@@ -194,6 +194,33 @@ jobs:
             | python3 -c "import sys,json; print(json.load(sys.stdin)['alarm']['state'])")
           test "$state" = "active_acked"
           curl -fsS -b ci-eng.jar -X PATCH -H 'Content-Type: application/json' -d '{"enabled":false}' $B/alarm-rules/$RULE > /dev/null
+      - name: Synoptiques - préparer les comptes de test
+        run: |
+          for spec in "e2e-engineer engineer" "e2e-operator operator" "e2e-viewer viewer"; do
+            set -- $spec
+            docker compose exec -T -e NEW_USER_PASSWORD=mot-de-passe-e2e-123 api python -m app.auth.cli create-user "$1" --role "$2"
+          done
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Synoptiques - installer Playwright
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Synoptiques - tests Playwright (créer, live, switch, versions, écrans)
+        # Le rapport `github` annote directement les échecs (fichier, ligne, message).
+        working-directory: e2e
+        run: npx playwright test
+      - name: Synoptiques - captures et traces en cas d'échec
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: e2e/test-results
+          if-no-files-found: ignore
       - name: Logs en cas d'échec
         if: failure()
         run: |

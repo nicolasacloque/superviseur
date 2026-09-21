@@ -4,8 +4,12 @@ export type EditorField =
   | { key: string; label: string; type: 'points'; min: number; max: number }
   | { key: string; label: string; type: 'select'; options: { value: string; label: string }[]; default: string }
   | { key: string; label: string; type: 'boolean'; default: boolean }
-  | { key: string; label: string; type: 'number'; optional: true }
-  | { key: string; label: string; type: 'text'; optional: true; placeholder?: string }
+  | { key: string; label: string; type: 'number'; optional?: boolean; min?: number; max?: number; step?: number; default?: number }
+  | { key: string; label: string; type: 'text'; optional?: boolean; placeholder?: string }
+  | { key: string; label: string; type: 'point' }
+  | { key: string; label: string; type: 'color'; default?: string }
+  | { key: string; label: string; type: 'image' }
+  | { key: string; label: string; type: 'target' }
 
 export interface WidgetInstance {
   /** Reçoit une nouvelle valeur temps réel. */

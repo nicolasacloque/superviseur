@@ -7,7 +7,16 @@ import type {
   HistoryQuery,
   HistoryResult,
   PointInfo,
+  PointsApi,
+  PointTree,
+  SessionUser,
+  SynopticRecord,
+  SynopticsApi,
+  SynopticSummary,
+  VersionInfo,
+  WriteApi,
 } from './types'
+import type { SynopticDoc } from '../synoptic/model'
 
 export class ApiError extends Error {
   constructor(
@@ -22,7 +31,7 @@ export class ApiError extends Error {
 type Fetch = typeof fetch
 
 /** Client REST : cookies de session (HttpOnly), un renouvellement automatique sur 401. */
-export class ApiClient implements HistoryApi, AlarmsApi {
+export class ApiClient implements HistoryApi, AlarmsApi, PointsApi, WriteApi, SynopticsApi {
   constructor(
     private readonly base = '/api/v1',
     private readonly fetchImpl: Fetch = (input, init) => fetch(input, init),
@@ -81,6 +90,75 @@ export class ApiClient implements HistoryApi, AlarmsApi {
     return this.get<PointInfo>(`/points/${pointId}`)
   }
 
+  async me(): Promise<SessionUser> {
+    return this.get<SessionUser>('/auth/me')
+  }
+
+  async logout(): Promise<void> {
+    await this.fetchImpl(`${this.base}/auth/logout`, { method: 'POST', credentials: 'include' })
+  }
+
+  async tree(path: string): Promise<PointTree> {
+    return this.get<PointTree>(`/points/tree?${new URLSearchParams({ path })}`)
+  }
+
+  async search(query: string, limit = 50): Promise<PointInfo[]> {
+    const params = new URLSearchParams({ q: query, limit: String(limit) })
+    return (await this.get<{ items: PointInfo[] }>(`/points?${params}`)).items
+  }
+
+  async write(pointId: string, value: number | null, priority: number): Promise<void> {
+    await this.send('POST', `/points/${pointId}/write`, { value, priority })
+  }
+
+  async synoptics(): Promise<SynopticSummary[]> {
+    return this.get<SynopticSummary[]>('/synoptics')
+  }
+
+  async synoptic(slug: string): Promise<SynopticRecord> {
+    return this.get<SynopticRecord>(`/synoptics/${encodeURIComponent(slug)}`)
+  }
+
+  async createSynoptic(doc: SynopticDoc, slug?: string): Promise<SynopticRecord> {
+    return this.send<SynopticRecord>('POST', '/synoptics', slug ? { doc, slug } : { doc })
+  }
+
+  async saveSynoptic(id: string, doc: SynopticDoc, baseVersion?: number): Promise<SynopticRecord> {
+    return this.send<SynopticRecord>('PUT', `/synoptics/${id}`, { doc, base_version: baseVersion })
+  }
+
+  async deleteSynoptic(id: string): Promise<void> {
+    await this.send('DELETE', `/synoptics/${id}`)
+  }
+
+  async versions(slug: string): Promise<VersionInfo[]> {
+    return this.get<VersionInfo[]>(`/synoptics/${encodeURIComponent(slug)}/versions`)
+  }
+
+  async version(slug: string, version: number): Promise<SynopticRecord> {
+    return this.get<SynopticRecord>(`/synoptics/${encodeURIComponent(slug)}/versions/${version}`)
+  }
+
+  async restoreVersion(id: string, version: number): Promise<SynopticRecord> {
+    return this.send<SynopticRecord>('POST', `/synoptics/${id}/restore/${version}`)
+  }
+
+  /** Requête avec corps JSON ; un 401 déclenche un renouvellement de session puis un second essai. */
+  private async send<T = void>(method: string, path: string, body?: unknown): Promise<T> {
+    const request = () =>
+      this.fetchImpl(`${this.base}${path}`, {
+        method,
+        credentials: 'include',
+        headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      })
+    let response = await request()
+    if (response.status === 401 && (await this.refresh())) response = await request()
+    if (!response.ok) throw new ApiError(response.status, await detail(response))
+    if (response.status === 204) return undefined as T
+    return (await response.json()) as T
+  }
+
   private async get<T>(path: string, signal?: AbortSignal): Promise<T> {
     const request = () =>
       this.fetchImpl(`${this.base}${path}`, { credentials: 'include', signal })
@@ -95,8 +173,20 @@ async function detail(response: Response): Promise<string> {
   try {
     const body = (await response.json()) as { detail?: unknown }
     if (typeof body.detail === 'string') return body.detail
+    if (Array.isArray(body.detail)) return validationMessages(body.detail)
   } catch {
     // corps absent ou illisible : on garde le statut HTTP
   }
   return `HTTP ${response.status}`
+}
+
+/** Messages lisibles d'un 422 de validation (`[{loc, msg}]`). */
+function validationMessages(errors: unknown[]): string {
+  return errors
+    .map((error) => {
+      const { loc, msg } = error as { loc?: unknown[]; msg?: string }
+      const where = (loc ?? []).filter((part) => part !== 'body').join(' > ')
+      return `${where ? `${where} : ` : ''}${(msg ?? 'invalide').replace(/^Value error, /, '')}`
+    })
+    .join(' ; ')
 }

@@ -108,23 +108,68 @@ change de plus que la **deadband** du point ou si `max_interval_s` s'est écoul�
 `PATCH /points/{id}`). `GET /points/{id}/history` renvoie les échantillons bruts ou une agrégation
 (`bucket=5m`, `1h`... ou `auto`).
 
-## Frontend
+## Synoptiques
 
-`frontend/` contient les widgets des synoptiques (TypeScript, Vite, uPlot) :
+L'application web (`frontend/`, TypeScript + Vite) est servie à la racine par l'API (le build est embarqué
+dans l'image Docker) : `http://127.0.0.1:8000/`. Connexion par identifiant et mot de passe, puis :
 
-- `trend` : courbes de 8 points au plus, de 15 min à 30 jours, en direct par WebSocket ;
-- `alarm_list` : alarmes filtrées par chemin, acquittement, mise à jour en direct.
+| Adresse | Page | Rôle minimal |
+|---|---|---|
+| `#/` | liste des synoptiques | viewer |
+| `#/view/<slug>` | viewer, valeurs en direct par WebSocket | viewer (commandes : operator) |
+| `#/edit/<slug>` · `#/edit/new` | éditeur | engineer |
+
+**Widgets** : `value`, `label`, `gauge`, `indicator`, `switch` (commande binaire avec confirmation),
+`setpoint` (consigne bornée, priorité configurable, relâchement), `trend`, `alarm_list`, `image`, `link`
+(navigation vers un autre synoptique), `shape`. Chaque widget a des règles d'affichage (`rules`) écrites
+dans un mini-langage d'expressions sûr (`value > 25 && status == "ok"`), évalué de la même façon côté
+Python (validation à l'enregistrement) et côté navigateur ; les vecteurs de test sont partagés.
+
+**Éditeur** : palette (clic ou glisser-déposer), sélection multiple et par rectangle, déplacement et
+redimensionnement à la souris avec magnétisme à la grille (Alt le suspend), alignement et répartition,
+copier / couper / coller / dupliquer, premier plan / arrière-plan, annuler / rétablir (100 étapes),
+zoom, aperçu en direct, historique des versions avec restauration.
+Raccourcis : Suppr, Ctrl+Z, Ctrl+Maj+Z ou Ctrl+Y, Ctrl+C / X / V / D / A, Ctrl+S, flèches (1 px, Maj : 10 px).
+
+**Format** : JSON versionné (`"schema": 1`), une ligne par version dans `synoptic_version`. Chaque
+enregistrement crée une version ; `PUT /synoptics/{id}` avec `base_version` répond 409 si quelqu'un a
+enregistré entre-temps. Restaurer une version en crée une nouvelle (l'historique n'est jamais réécrit).
+
+```bash
+B=http://127.0.0.1:8000/api/v1
+curl -b jar $B/synoptics                              # liste
+curl -b jar $B/synoptics/cta-1                        # dernière version
+curl -b jar $B/synoptics/cta-1/versions               # historique
+curl -b jar -X POST $B/synoptics/<id>/restore/2       # restauration → nouvelle version
+```
+
+**Développement**
 
 ```bash
 cd frontend
 npm ci
-npm test              # tests unitaires (vitest)
-npm run dev           # page de démonstration : http://localhost:5173 (données simulées)
-npm run build         # vérification des types puis build
+npm test              # tests unitaires (vitest, jsdom)
+npm run dev           # http://localhost:5173, l'API est atteinte par proxy sur 127.0.0.1:8000
+npm run build         # vérification des types puis build (index.html = application, demo.html = démo widgets)
 ```
 
-Page de démonstration sur l'API réelle : `?api=1&points=<uuid>,<uuid>` (le proxy Vite envoie `/api`
-vers `127.0.0.1:8000`).
+`demo.html` affiche les widgets `trend` et `alarm_list` avec des données simulées
+(`?api=1&points=<uuid>,<uuid>` pour l'API réelle).
+
+**Tests d'acceptation (Playwright)** : ils s'exécutent contre la stack complète avec le simulateur et
+vérifient la création de 10 widgets liés, les valeurs en direct, la commande du `switch` (valeur relue sur
+l'appareil simulé), la restauration d'une version et l'affichage 1920×1080 / tablettes.
+
+```bash
+docker compose --profile sim up -d --build --wait     # avec COLLECTOR_CONFIG=/config/collector.sim.yaml
+for spec in "e2e-engineer engineer" "e2e-operator operator" "e2e-viewer viewer"; do set -- $spec
+  docker compose exec -T -e NEW_USER_PASSWORD=mot-de-passe-e2e-123 api python -m app.auth.cli create-user "$1" --role "$2"
+done
+cd e2e && npm ci && npx playwright install chromium && npx playwright test
+```
+
+Variables : `E2E_BASE_URL` (défaut `http://127.0.0.1:8000`), `E2E_CHANNEL=chrome` pour utiliser le Chrome
+installé, `E2E_PASSWORD`, `E2E_ENGINEER_LOGIN`, `E2E_OPERATOR_LOGIN`, `E2E_VIEWER_LOGIN`.
 
 ## Variables d'environnement
 
@@ -139,6 +184,7 @@ vers `127.0.0.1:8000`).
 | `RETENTION_DAYS` | Rétention de l'historique en jours (défaut 730, 0 = illimitée) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | Notifications email (Jalon 5) |
 | `BACNET_BIND_IP` | Interface du collecteur (Jalon 2) |
+| `FRONTEND_DIR` | Dossier du frontend compilé servi par l'API (posé par l'image Docker ; vide = non servi) |
 
 ## Développement
 
@@ -179,6 +225,7 @@ backend/app/db/        modèles SQLAlchemy, session
 backend/app/api/       application FastAPI : routes REST, WebSocket, audit
 backend/app/auth/      mots de passe argon2id, JWT, rôles, CLI utilisateurs
 backend/alembic/       migrations (0001 = schéma + rôles, 0002 = hypertable et compression)
-frontend/              widgets des synoptiques (widget trend), page de démonstration
+frontend/              application web : viewer, éditeur, widgets (uPlot), démo des widgets
+e2e/                   tests d'acceptation Playwright (Jalon 6)
 docs/QUESTIONS.md      décisions par défaut à confirmer
 ```

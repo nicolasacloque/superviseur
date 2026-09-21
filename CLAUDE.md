@@ -19,11 +19,11 @@ pytest                       # tests unitaires
 TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/supervisor_test pytest   # + migrations
 ```
 
-Frontend (depuis `frontend/`) : `npm ci && npm run typecheck && npm test`.
+Frontend (depuis `frontend/`) : `npm ci && npm run typecheck && npm test`. Tests d'acceptation : `e2e/` (Playwright, stack + simulateur requis, voir README).
 
 Stack complète : `cp .env.example .env` puis `docker compose up -d --build --wait`.
 
 ## État
 
-Jalons 1 à 5 livrés (socle, simulateur + collecteur, API + WebSocket + écriture, historiques et widget `trend`, alarmes) ; le Jalon 6 (synoptiques) n'est pas commencé.
+Jalons 1 à 6 livrés (socle, simulateur + collecteur, API + WebSocket + écriture, historiques et widget `trend`, alarmes, synoptiques : éditeur, viewer, widgets, tests Playwright) ; le Jalon 7 (production) n'est pas commencé.
 Voir README.md et docs/QUESTIONS.md.
