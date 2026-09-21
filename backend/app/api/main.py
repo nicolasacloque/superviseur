@@ -5,15 +5,17 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, FastAPI
+from fastapi.staticfiles import StaticFiles
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.api.deps import jwt_secret
 from app.api.health import router as health_router
-from app.api.routes import alarms, audit, auth, devices, points, write, ws
+from app.api.routes import alarms, audit, auth, devices, points, synoptics, write, ws
 from app.common.config import Settings, get_settings
 from app.common.logging import configure_logging
 from app.db.session import create_engine, create_session_factory
@@ -62,13 +64,16 @@ def create_app(
         openapi_url="/api/openapi.json",
     )
     api = APIRouter(prefix="/api/v1")
-    for module in (auth, devices, points, write, alarms, audit):
+    for module in (auth, devices, points, write, alarms, synoptics, audit):
         api.include_router(module.router)
     api.include_router(health_router)
     api.include_router(ws.router)
     app.include_router(api)
     # Alias à la racine pour les healthchecks Docker et la supervision externe.
     app.include_router(health_router, include_in_schema=False)
+    if resolved.frontend_dir and Path(resolved.frontend_dir).is_dir():
+        # Monté en dernier : les routes de l'API et /api/docs restent prioritaires.
+        app.mount("/", StaticFiles(directory=resolved.frontend_dir, html=True), name="frontend")
     return app
 
 

@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     refresh_token_days: int = 7
     # Délai d'attente de la réponse du collecteur à une écriture de consigne.
     write_timeout_s: float = 10.0
+    # Frontend compilé : s'il existe, l'API le sert à la racine (sinon Nginx s'en charge).
+    frontend_dir: str | None = None
 
 
 @lru_cache

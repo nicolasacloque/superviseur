@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel
 from sqlalchemy import ColumnElement, delete, exists, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -117,6 +118,69 @@ async def list_points(
     outs = [PointOut.model_validate(p) for p in points]
     await _decorate(session, outs)
     return PointPage(items=outs, total=total or 0, limit=limit, offset=offset)
+
+
+class TreeFolder(BaseModel):
+    name: str
+    path: str
+    count: int
+
+
+class TreeOut(BaseModel):
+    """Contenu d'un niveau de l'arborescence logique des points (sélecteur de points)."""
+
+    path: str
+    folders: list[TreeFolder]
+    points: list[PointOut]
+
+
+NO_PATH = "(sans chemin)"
+MAX_TREE_POINTS = 200
+
+
+@router.get("/points/tree", response_model=TreeOut)
+async def points_tree(
+    session: SessionDep,
+    path: Annotated[str, Query(description="niveau à lister ; vide = racine")] = "",
+) -> TreeOut:
+    """Dossiers (segments suivants du chemin) et points directement sous `path`."""
+    prefix = path.strip("/")
+    stem = f"{prefix}/" if prefix else ""
+    logical = func.coalesce(Point.path, NO_PATH + "/" + Point.name)
+    query = select(Point.id, logical).where(Point.missing.is_(False))
+    if stem:
+        query = query.where(logical.startswith(stem, autoescape=True))
+    counts: dict[str, int] = {}
+    leaves: list[uuid.UUID] = []
+    for point_id, full in (await session.execute(query)).all():
+        rest = full[len(stem) :]
+        if "/" in rest:
+            folder = rest.split("/", 1)[0]
+            counts[folder] = counts.get(folder, 0) + 1
+        else:
+            leaves.append(point_id)
+    points: list[Point] = []
+    if leaves:
+        points = list(
+            (
+                await session.scalars(
+                    select(Point)
+                    .where(Point.id.in_(leaves[: MAX_TREE_POINTS * 5]))
+                    .order_by(Point.name)
+                    .limit(MAX_TREE_POINTS)
+                )
+            ).all()
+        )
+    outs = [PointOut.model_validate(p) for p in points]
+    await _decorate(session, outs)
+    return TreeOut(
+        path=prefix,
+        folders=[
+            TreeFolder(name=name, path=f"{stem}{name}", count=count)
+            for name, count in sorted(counts.items())
+        ],
+        points=outs,
+    )
 
 
 @router.get("/points/{point_id}", response_model=PointDetail)
