@@ -16,12 +16,23 @@ curl_opts=(-sS --max-time 15)
 
 failures=0
 pass() { echo "  ok    $1"; }
-fail() { echo "  ECHEC $1"; failures=$((failures + 1)); }
+fail() {
+  echo "  ECHEC $1"
+  failures=$((failures + 1))
+  # Dans GitHub Actions, l'échec devient une annotation lisible sans ouvrir les journaux.
+  [[ -n "${GITHUB_ACTIONS:-}" ]] && echo "::error title=security-check::$1"
+  return 0
+}
 expect() { # expect "libellé" commande...   (la commande doit réussir)
   local label="$1"; shift
   if "$@" > /dev/null 2>&1; then pass "$label"; else fail "$label"; fi
 }
-status() { curl "${curl_opts[@]}" -o /dev/null -w '%{http_code}' "$@" 2>/dev/null || echo 000; }
+# Code HTTP seul ; « 000 » si la connexion échoue (curl l'écrit déjà lui-même dans ce cas).
+status() {
+  local code
+  code="$(curl "${curl_opts[@]}" -o /dev/null -w '%{http_code}' "$@" 2>/dev/null)" || true
+  echo "${code:-000}"
+}
 has_header() { grep -iq "^$1:" <<< "$2"; }
 
 echo "== Redirection HTTP -> HTTPS"
