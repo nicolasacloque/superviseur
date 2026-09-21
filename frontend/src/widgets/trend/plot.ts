@@ -1,5 +1,5 @@
 import type { Aligned } from './series'
-import type { Theme } from './theme'
+import type { Theme } from '../theme'
 
 export interface PlotSpec {
   width: number

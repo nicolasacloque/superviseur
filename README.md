@@ -110,8 +110,10 @@ change de plus que la **deadband** du point ou si `max_interval_s` s'est écoul�
 
 ## Frontend
 
-`frontend/` contient les widgets des synoptiques (TypeScript, Vite, uPlot). Le premier, `trend`, trace
-jusqu'à 8 points sur 15 min à 30 jours, en direct par WebSocket.
+`frontend/` contient les widgets des synoptiques (TypeScript, Vite, uPlot) :
+
+- `trend` : courbes de 8 points au plus, de 15 min à 30 jours, en direct par WebSocket ;
+- `alarm_list` : alarmes filtrées par chemin, acquittement, mise à jour en direct.
 
 ```bash
 cd frontend

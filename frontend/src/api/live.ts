@@ -1,4 +1,4 @@
-import type { LiveApi, LiveSample, LiveState } from './types'
+import type { AlarmEvent, LiveApi, LiveSample, LiveState } from './types'
 
 /** Le sous-ensemble de WebSocket utilisé : permet de le remplacer dans les tests. */
 export interface SocketLike {
@@ -34,6 +34,7 @@ export class LiveClient implements LiveApi {
   private socket: SocketLike | null = null
   private current: LiveState = 'closed'
   private readonly listeners = new Map<string, Set<(sample: LiveSample) => void>>()
+  private readonly alarmListeners = new Set<(event: AlarmEvent) => void>()
   private readonly stateListeners = new Set<(state: LiveState) => void>()
   private attempts = 0
   private cancelRetry: (() => void) | null = null
@@ -48,6 +49,20 @@ export class LiveClient implements LiveApi {
   onState(listener: (state: LiveState) => void): () => void {
     this.stateListeners.add(listener)
     return () => this.stateListeners.delete(listener)
+  }
+
+  private get wanted(): boolean {
+    return this.listeners.size > 0 || this.alarmListeners.size > 0
+  }
+
+  /** Les alarmes sont envoyées à tout client connecté : pas d'abonnement à déclarer. */
+  subscribeAlarms(listener: (event: AlarmEvent) => void): () => void {
+    this.alarmListeners.add(listener)
+    if (this.socket === null && this.cancelRetry === null && !this.reconnecting) this.connect()
+    return () => {
+      this.alarmListeners.delete(listener)
+      if (!this.wanted) this.disconnect()
+    }
   }
 
   subscribe(points: string[], listener: (sample: LiveSample) => void): () => void {
@@ -75,7 +90,7 @@ export class LiveClient implements LiveApi {
         }
       }
       if (this.current === 'open') this.send('unsubscribe', removed)
-      if (this.listeners.size === 0) this.disconnect()
+      if (!this.wanted) this.disconnect()
     }
   }
 
@@ -111,7 +126,7 @@ export class LiveClient implements LiveApi {
       if (this.socket !== socket) return // socket déjà remplacé ou fermé volontairement
       this.socket = null
       this.setState('closed')
-      if (this.listeners.size > 0) void this.reconnect(event.code)
+      if (this.wanted) void this.reconnect(event.code)
     }
   }
 
@@ -125,7 +140,7 @@ export class LiveClient implements LiveApi {
       } catch {
         renewed = false
       }
-      if (renewed && this.listeners.size > 0) return this.connect()
+      if (renewed && this.wanted) return this.connect()
     }
     const min = this.options.minDelayMs ?? 1000
     const max = this.options.maxDelayMs ?? 30000
@@ -134,7 +149,7 @@ export class LiveClient implements LiveApi {
     this.attempts += 1
     this.reconnecting = false
     this.cancelRetry = setTimer(() => {
-      if (this.listeners.size > 0) this.connect()
+      if (this.wanted) this.connect()
       else this.cancelRetry = null
     }, delay)
   }
@@ -150,10 +165,21 @@ export class LiveClient implements LiveApi {
 
   private dispatch(data: unknown): void {
     if (typeof data !== 'string') return
-    let message: { type?: string; point?: string; ts?: string; value?: number | null; status?: string }
+    let message: {
+      type?: string
+      point?: string
+      ts?: string
+      value?: number | null
+      status?: string
+      event?: AlarmEvent
+    }
     try {
       message = JSON.parse(data)
     } catch {
+      return
+    }
+    if (message.type === 'alarm' && message.event?.event) {
+      for (const listener of [...this.alarmListeners]) listener(message.event)
       return
     }
     if (message.type !== 'value' || !message.point || !message.ts) return

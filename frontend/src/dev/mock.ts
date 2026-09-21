@@ -1,6 +1,13 @@
 /** Données simulées pour la page de démonstration (`npm run dev`), sans API ni base. */
 
+import { matches } from '../widgets/alarm_list/alarms'
+import type { StateFilter } from '../widgets/alarm_list/alarms'
 import type {
+  Alarm,
+  AlarmEvent,
+  AlarmPage,
+  AlarmQuery,
+  AlarmsApi,
   HistoryApi,
   HistoryQuery,
   HistoryResult,
@@ -75,6 +82,18 @@ export class MockLive implements LiveApi {
     return () => points.forEach((point) => this.listeners.get(point)?.delete(listener))
   }
 
+  private readonly alarmListeners = new Set<(event: AlarmEvent) => void>()
+
+  subscribeAlarms(listener: (event: AlarmEvent) => void): () => void {
+    this.alarmListeners.add(listener)
+    return () => this.alarmListeners.delete(listener)
+  }
+
+  /** Diffuse une transition d'alarme aux widgets abonnés. */
+  emitAlarm(event: AlarmEvent): void {
+    for (const listener of [...this.alarmListeners]) listener(event)
+  }
+
   onState(listener: (state: LiveState) => void): () => void {
     this.stateListeners.add(listener)
     return () => this.stateListeners.delete(listener)
@@ -93,5 +112,83 @@ export class MockLive implements LiveApi {
       const sample: LiveSample = { point, ts: now, value: valueAt(point, now), status: 'ok' }
       for (const listener of [...group]) listener(sample)
     }
+  }
+}
+
+
+const SAMPLE_ALARMS: Partial<Alarm>[] = [
+  { rule_name: 'Soufflage trop chaud', severity: 'critical', path: 'Site/Bât A/CTA-1/Température soufflage', kind: 'high', value: 31.2, threshold: 28, unit: '°C', minutesAgo: 4 },
+  { rule_name: 'Ventilateur en défaut', severity: 'critical', path: 'Site/Bât A/CTA-1/Défaut ventilateur', kind: 'state', value: 1, threshold: 1, unit: null, state: 'active_acked', acked_by: 'olivia', minutesAgo: 35 },
+  { rule_name: 'Reprise trop froide', severity: 'warning', path: 'Site/Bât A/CTA-2/Température reprise', kind: 'low', value: 4.1, threshold: 5, unit: '°C', state: 'cleared_unacked', minutesAgo: 90 },
+  { rule_name: 'Contrôleur injoignable', severity: 'warning', path: 'Site/Bât B/VAV-7/Température zone', kind: 'comm_lost', value: null, threshold: null, unit: null, minutesAgo: 12 },
+  { rule_name: 'Sonde figée', severity: 'info', path: 'Site/Bât B/Extérieur/Température', kind: 'stale', value: 12.4, threshold: 300, unit: '°C', state: 'active_acked', acked_by: 'edgar', minutesAgo: 240 },
+] as (Partial<Alarm> & { minutesAgo: number })[]
+
+let sequence = 0
+
+function makeAlarm(input: Partial<Alarm> & { minutesAgo?: number }): Alarm {
+  sequence += 1
+  const { minutesAgo = 0, ...rest } = input
+  return {
+    id: `mock-${sequence}`,
+    rule_id: `rule-${sequence}`,
+    rule_name: null,
+    kind: 'high',
+    severity: 'warning',
+    state: 'active_unacked',
+    point_id: `point-${sequence}`,
+    point_name: 'Point',
+    path: null,
+    unit: null,
+    threshold: null,
+    value: null,
+    raised_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
+    acked_at: null,
+    acked_by: null,
+    cleared_at: null,
+    ...rest,
+  }
+}
+
+/** Alarmes en mémoire : filtrage comme l'API, acquittement, et déclenchement à la demande. */
+export class MockAlarms implements AlarmsApi {
+  private items: Alarm[] = (SAMPLE_ALARMS as (Partial<Alarm> & { minutesAgo: number })[]).map(makeAlarm)
+
+  constructor(private readonly live: MockLive) {}
+
+  async alarms(query: AlarmQuery): Promise<AlarmPage> {
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    const filter = { states: (query.state ?? 'open') as StateFilter, path: query.path }
+    const items = this.items.filter((a) => matches(a, filter)).slice(0, query.limit ?? 100)
+    return { items, total: items.length }
+  }
+
+  async acknowledge(alarmId: string): Promise<Alarm> {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const found = this.items.find((a) => a.id === alarmId)
+    if (!found) throw new Error('alarme introuvable')
+    const acked: Alarm = {
+      ...found,
+      state: found.state === 'cleared_unacked' ? 'normal' : 'active_acked',
+      acked_by: 'vous',
+      acked_at: new Date().toISOString(),
+    }
+    this.items = this.items.map((a) => (a.id === alarmId ? acked : a))
+    this.live.emitAlarm({ transition: 'acked', event: acked })
+    return acked
+  }
+
+  /** Simule le déclenchement d'une nouvelle alarme, poussée en direct. */
+  raise(): void {
+    const alarm = makeAlarm({
+      rule_name: 'Température haute (simulée)',
+      severity: Math.random() > 0.5 ? 'critical' : 'warning',
+      path: `Site/Bât A/CTA-${1 + (sequence % 3)}/Température`,
+      value: 30 + Math.round(Math.random() * 40) / 10,
+      threshold: 28,
+      unit: '°C',
+    })
+    this.items = [alarm, ...this.items]
+    this.live.emitAlarm({ transition: 'raised', event: alarm })
   }
 }

@@ -10,7 +10,7 @@ import type {
 } from '../../api/types'
 import type { PlotAdapter, PlotFactory, PlotSpec } from './plot'
 import { TrendConfigError } from './schema'
-import { DARK, LIGHT } from './theme'
+import { DARK, LIGHT } from '../theme'
 import { MIN_DRAW_INTERVAL_MS, render, type TrendInstance, WINDOW_TICK_MS } from './trend'
 
 const T0 = Date.parse('2026-09-21T12:00:00Z') // ms
@@ -73,6 +73,9 @@ class FakeLive implements LiveApi {
       this.unsubscribed++
       this.listeners.delete(listener)
     }
+  }
+  subscribeAlarms(): () => void {
+    return () => undefined
   }
   onState(listener: (s: LiveState) => void): () => void {
     this.stateListeners.add(listener)

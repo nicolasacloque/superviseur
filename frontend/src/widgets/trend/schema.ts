@@ -1,6 +1,6 @@
 import type { EditorField } from '../types'
 import { RANGES, type Range } from './series'
-import type { ThemePreference } from './theme'
+import type { ThemePreference } from '../theme'
 
 export const MAX_SERIES = 8
 

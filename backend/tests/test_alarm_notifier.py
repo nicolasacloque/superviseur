@@ -9,9 +9,10 @@ from typing import Any
 import httpx
 import pytest
 
+from app.alarms.channels import valid_webhook_url
 from app.alarms.messages import AlarmInfo, Notification, build_notification, digest_text
 from app.alarms.notifier import Notifier
-from app.alarms.senders import WebhookSender, valid_webhook_url
+from app.alarms.senders import WebhookSender
 
 T0 = datetime(2026, 9, 21, 10, 0, tzinfo=UTC)
 

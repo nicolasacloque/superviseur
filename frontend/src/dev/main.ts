@@ -1,8 +1,9 @@
 import { ApiClient } from '../api/client'
 import { LiveClient } from '../api/live'
-import type { HistoryApi, LiveApi } from '../api/types'
+import type { AlarmsApi, HistoryApi, LiveApi } from '../api/types'
+import { render as renderAlarmList } from '../widgets/alarm_list'
 import { render } from '../widgets/trend'
-import { MOCK_POINTS, MockApi, MockLive } from './mock'
+import { MOCK_POINTS, MockAlarms, MockApi, MockLive } from './mock'
 
 /**
  * Page de démonstration du widget `trend`.
@@ -13,15 +14,20 @@ const params = new URLSearchParams(location.search)
 const useApi = params.get('api') === '1'
 
 let api: HistoryApi
+let alarmsApi: AlarmsApi
 let live: LiveApi
+let mockAlarms: MockAlarms | null = null
 const mockLive = useApi ? null : new MockLive()
 if (useApi) {
   const client = new ApiClient()
   api = client
+  alarmsApi = client
   live = new LiveClient({ url: '/api/v1/ws', refresh: () => client.refresh() })
 } else {
   api = new MockApi()
   live = mockLive as MockLive
+  mockAlarms = new MockAlarms(mockLive as MockLive)
+  alarmsApi = mockAlarms
 }
 document.getElementById('mode')!.textContent = useApi ? 'API réelle' : 'données simulées'
 
@@ -60,6 +66,9 @@ for (const demo of demos) {
   render(cell(demo.wide), { bind: { points: demo.points }, range: demo.range }, { api, live })
 }
 
+// Liste des alarmes sur toute la largeur, sous les courbes.
+renderAlarmList(cell(true), { states: 'open' }, { api: alarmsApi, live })
+
 document.getElementById('theme')!.addEventListener('change', (event) => {
   const value = (event.target as HTMLSelectElement).value
   if (value === 'auto') delete document.documentElement.dataset.theme
@@ -78,3 +87,7 @@ cut.addEventListener('click', () => {
   cut.textContent = closing ? 'Rétablir le direct' : 'Couper le direct'
 })
 if (useApi) cut.hidden = true
+
+const raise = document.getElementById('raise') as HTMLButtonElement
+raise.addEventListener('click', () => mockAlarms?.raise())
+if (useApi) raise.hidden = true

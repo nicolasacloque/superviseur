@@ -17,7 +17,7 @@ import {
   type SeriesData,
   trimBefore,
 } from './series'
-import { resolveTheme, type Theme } from './theme'
+import { resolveTheme, type Theme } from '../theme'
 
 /** Au plus 10 rendus par seconde et par widget (section 10.5). */
 export const MIN_DRAW_INTERVAL_MS = 100

@@ -50,7 +50,56 @@ export type LiveState = 'connecting' | 'open' | 'closed'
 
 export interface LiveApi {
   readonly state: LiveState
+  /** Reçoit les transitions d'alarme (`{"type":"alarm"}` du WebSocket). */
+  subscribeAlarms(listener: (event: AlarmEvent) => void): () => void
   /** S'abonne aux points ; retourne la fonction de désabonnement. */
   subscribe(points: string[], listener: (sample: LiveSample) => void): () => void
   onState(listener: (state: LiveState) => void): () => void
+}
+
+export type AlarmState = 'active_unacked' | 'active_acked' | 'cleared_unacked' | 'normal'
+export type AlarmSeverity = 'info' | 'warning' | 'critical'
+
+export interface Alarm {
+  id: string
+  rule_id: string
+  rule_name: string | null
+  kind: string
+  severity: AlarmSeverity
+  state: AlarmState
+  point_id: string
+  point_name: string
+  path: string | null
+  unit: string | null
+  threshold: number | null
+  /** Valeur du point au déclenchement. */
+  value: number | null
+  raised_at: string
+  acked_at: string | null
+  acked_by: string | null
+  cleared_at: string | null
+}
+
+/** Transition poussée par le serveur : `raised`, `cleared`, `acked` ou `normal`. */
+export interface AlarmEvent {
+  transition: string
+  event: Alarm
+}
+
+export interface AlarmQuery {
+  /** `open` (défaut), `active`, `unacked`, `closed`, `all` ou un état exact. */
+  state?: string
+  path?: string
+  limit?: number
+}
+
+export interface AlarmPage {
+  items: Alarm[]
+  total: number
+}
+
+export interface AlarmsApi {
+  alarms(query: AlarmQuery, signal?: AbortSignal): Promise<AlarmPage>
+  /** Acquitte une alarme ; retourne l'alarme mise à jour. */
+  acknowledge(alarmId: string): Promise<Alarm>
 }

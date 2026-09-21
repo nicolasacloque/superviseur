@@ -213,4 +213,40 @@ describe('LiveClient', () => {
     expect(timers).toHaveLength(0)
     expect(sockets).toHaveLength(1)
   })
+
+  it('distribue les alarmes aux abonnés, sans abonnement de points', () => {
+    const live = client()
+    const seen: unknown[] = []
+    const off = live.subscribeAlarms((event) => seen.push(event))
+    expect(sockets).toHaveLength(1) // un widget d'alarmes suffit à ouvrir la connexion
+    sockets[0]?.open()
+    expect(sockets[0]?.sent).toEqual([]) // les alarmes n'exigent aucune déclaration
+    const event = { transition: 'raised', event: { id: 'a1', state: 'active_unacked' } }
+    sockets[0]?.push({ type: 'alarm', event })
+    sockets[0]?.push({ type: 'alarm' }) // message sans contenu : ignoré
+    expect(seen).toEqual([event])
+
+    off()
+    expect(sockets[0]?.closed).toBe(true) // plus personne n'écoute
+  })
+
+  it('garde la connexion tant qu\'un widget de points ou d\'alarmes reste', () => {
+    const live = client()
+    const offPoints = live.subscribe(['a'], () => {})
+    const offAlarms = live.subscribeAlarms(() => {})
+    sockets[0]?.open()
+    offPoints()
+    expect(sockets[0]?.closed).toBe(false) // les alarmes sont encore suivies
+    offAlarms()
+    expect(sockets[0]?.closed).toBe(true)
+  })
+
+  it('se reconnecte pour un simple abonné aux alarmes', () => {
+    const live = client()
+    live.subscribeAlarms(() => {})
+    sockets[0]?.open()
+    sockets[0]?.drop()
+    timers[0]?.fn()
+    expect(sockets).toHaveLength(2)
+  })
 })

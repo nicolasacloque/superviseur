@@ -141,3 +141,14 @@ Décisions prises par défaut (option la plus simple) faute de précision dans S
     quatre autres formes de règles sont disponibles pour ce contrôleur.
 37. **Règles : PATCH et non PUT** ; un ingénieur uniquement (comme dans le CDC). La modification est fusionnée
     avec l'existant puis revalidée en entier. `point_id` ne se modifie pas : créer une autre règle.
+38. **Widget `alarm_list`** (`frontend/`) : tableau des alarmes filtré par préfixe de chemin et par groupe
+    d'états (ouvertes, actives, à acquitter, closes, toutes), 200 lignes au plus. Les alarmes à acquitter
+    passent en premier, puis la gravité, puis la récence. La sévérité n'est jamais portée par la couleur
+    seule : forme (losange, triangle, cercle) et libellé l'accompagnent ; les deux couleurs d'état
+    (critique, avertissement) sont fixes et ne suivent pas le thème. Le bouton d'acquittement peut être
+    retiré de la configuration ; un refus de droits est expliqué et la liste est resynchronisée. La liste
+    se met à jour par les événements `alarm` du WebSocket et se recharge à chaque reconnexion pour
+    rattraper ce qui a été manqué pendant une coupure.
+39. **Dépendances d'exécution** : `httpx` (webhooks) est une dépendance du service, pas seulement des tests.
+    Un job CI installe le paquet seul dans un environnement vierge et importe l'API et les services : l'image
+    Docker n'a pas les outils de test, et une dépendance manquante n'apparaît sinon qu'au démarrage.

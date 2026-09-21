@@ -48,6 +48,11 @@ jobs:
       - run: ruff check . ../simulator
       - run: ruff format --check . ../simulator
       - run: mypy
+      - name: Les dépendances d'exécution suffisent (l'image Docker n'installe pas les outils de test)
+        run: |
+          python -m venv /tmp/runtime
+          /tmp/runtime/bin/pip install --quiet .
+          cd /tmp && /tmp/runtime/bin/python -c "import app.api.main, app.collector.main, app.alarms.main, app.auth.cli"
       - run: pytest -m "not perf" --cov=app --cov-report=term-missing
 
   performance:
@@ -191,7 +196,15 @@ jobs:
           curl -fsS -b ci-eng.jar -X PATCH -H 'Content-Type: application/json' -d '{"enabled":false}' $B/alarm-rules/$RULE > /dev/null
       - name: Logs en cas d'échec
         if: failure()
-        run: docker compose --profile sim logs --tail 200
+        run: |
+          docker compose --profile sim ps -a || true
+          docker compose --profile sim logs --tail 200
+          # Les 40 dernières lignes de chaque service en annotation, lisibles sans ouvrir les journaux.
+          for service in api alarms collector; do
+            out=$(docker compose --profile sim logs --no-color --tail 40 "$service" 2>&1 | cut -c1-300 \
+              | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+            echo "::error title=logs $service::${out}"
+          done
       - name: Arrêter la stack
         if: always()
         run: docker compose --profile sim down -v

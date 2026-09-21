@@ -5,6 +5,7 @@ export type EditorField =
   | { key: string; label: string; type: 'select'; options: { value: string; label: string }[]; default: string }
   | { key: string; label: string; type: 'boolean'; default: boolean }
   | { key: string; label: string; type: 'number'; optional: true }
+  | { key: string; label: string; type: 'text'; optional: true; placeholder?: string }
 
 export interface WidgetInstance {
   /** Reçoit une nouvelle valeur temps réel. */

@@ -1,4 +1,13 @@
-import type { HistoryApi, HistoryQuery, HistoryResult, PointInfo } from './types'
+import type {
+  Alarm,
+  AlarmPage,
+  AlarmQuery,
+  AlarmsApi,
+  HistoryApi,
+  HistoryQuery,
+  HistoryResult,
+  PointInfo,
+} from './types'
 
 export class ApiError extends Error {
   constructor(
@@ -13,7 +22,7 @@ export class ApiError extends Error {
 type Fetch = typeof fetch
 
 /** Client REST : cookies de session (HttpOnly), un renouvellement automatique sur 401. */
-export class ApiClient implements HistoryApi {
+export class ApiClient implements HistoryApi, AlarmsApi {
   constructor(
     private readonly base = '/api/v1',
     private readonly fetchImpl: Fetch = (input, init) => fetch(input, init),
@@ -49,6 +58,23 @@ export class ApiClient implements HistoryApi {
     if (query.bucket) params.set('bucket', query.bucket)
     if (query.maxPoints) params.set('max_points', String(query.maxPoints))
     return this.get<HistoryResult>(`/points/${pointId}/history?${params}`, signal)
+  }
+
+  async alarms(query: AlarmQuery, signal?: AbortSignal): Promise<AlarmPage> {
+    const params = new URLSearchParams()
+    if (query.state) params.set('state', query.state)
+    if (query.path) params.set('path', query.path)
+    if (query.limit) params.set('limit', String(query.limit))
+    return this.get<AlarmPage>(`/alarms?${params}`, signal)
+  }
+
+  async acknowledge(alarmId: string): Promise<Alarm> {
+    const request = () =>
+      this.fetchImpl(`${this.base}/alarms/${alarmId}/ack`, { method: 'POST', credentials: 'include' })
+    let response = await request()
+    if (response.status === 401 && (await this.refresh())) response = await request()
+    if (!response.ok) throw new ApiError(response.status, await detail(response))
+    return ((await response.json()) as { alarm: Alarm }).alarm
   }
 
   async point(pointId: string): Promise<PointInfo> {
