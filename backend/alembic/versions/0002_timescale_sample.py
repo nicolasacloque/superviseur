@@ -20,7 +20,7 @@ DEFAULT_RETENTION_DAYS = 730
 
 
 def upgrade() -> None:
-    # Pas d'index par défaut sur `ts` seul : la clé primaire (point_id, ts) sert toutes les requêtes.
+    # Pas d'index par défaut sur `ts` seul : la clé primaire (point_id, ts) sert les requêtes.
     op.execute(
         """
         SELECT create_hypertable(
