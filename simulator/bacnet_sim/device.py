@@ -15,9 +15,10 @@ from bacpypes3.apdu import (
     ReadPropertyRequest,
     RejectPDU,
     SubscribeCOVRequest,
+    UnconfirmedEventNotificationRequest,
 )
 from bacpypes3.app import Application
-from bacpypes3.basetypes import PropertyIdentifier
+from bacpypes3.basetypes import PropertyIdentifier, TimeStamp
 from bacpypes3.local.analog import (
     AnalogInputObject,
     AnalogOutputObject,
@@ -30,6 +31,7 @@ from bacpypes3.local.device import DeviceObject
 from bacpypes3.local.multistate import MultiStateValueObject
 from bacpypes3.local.networkport import NetworkPortObject
 from bacpypes3.object import Object
+from bacpypes3.pdu import Address
 from bacpypes3.primitivedata import ObjectIdentifier
 
 from bacnet_sim.faults import Faults
@@ -236,6 +238,31 @@ class SimDevice:
         )
         self._points.append(SimPoint(obj, kind))
         return obj
+
+    def send_event(
+        self,
+        destination: str,
+        object_type: str,
+        number: int,
+        to_state: str,
+        from_state: str = "normal",
+    ) -> None:
+        """Émet une Event Notification (non confirmée) vers le superviseur, comme le ferait un
+        contrôleur dont la classe de notification compte le superviseur parmi ses destinataires."""
+        request = UnconfirmedEventNotificationRequest(
+            processIdentifier=1,
+            initiatingDeviceIdentifier=("device", self.instance),
+            eventObjectIdentifier=(object_type, number),
+            timeStamp=TimeStamp.as_time(),
+            notificationClass=1,
+            priority=100,
+            eventType="outOfRange",
+            notifyType="alarm",
+            fromState=from_state,
+            toState=to_state,
+            destination=Address(destination),
+        )
+        self.app.request(request)
 
     async def animate(self, tick_s: float = 2.0) -> None:
         """Fait évoluer les entrées : sinusoïdes bruitées, bascules aléatoires."""

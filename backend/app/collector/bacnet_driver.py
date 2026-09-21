@@ -15,10 +15,12 @@ from typing import Any, TypeVar
 from bacpypes3.apdu import (
     AbortPDU,
     ConfirmedCOVNotificationRequest,
+    ConfirmedEventNotificationRequest,
     ErrorRejectAbortNack,
     SimpleAckPDU,
     SubscribeCOVRequest,
     UnconfirmedCOVNotificationRequest,
+    UnconfirmedEventNotificationRequest,
 )
 from bacpypes3.app import Application
 from bacpypes3.basetypes import ErrorType, HostNPort, IPMode
@@ -39,6 +41,8 @@ from app.collector.driver_base import (
     DeviceInfo,
     DeviceUnreachable,
     DriverError,
+    EventCallback,
+    EventNotice,
     ObjectInfo,
     PointRef,
     Reading,
@@ -101,6 +105,20 @@ class CollectorApplication(Application):  # type: ignore[misc]
     """Application bacpypes3 qui relaie les notifications COV au driver."""
 
     cov_handler: Callable[[Any], Awaitable[None]] | None = None
+    event_handler: Callable[[Any], Awaitable[None]] | None = None
+
+    async def do_ConfirmedEventNotificationRequest(
+        self, apdu: ConfirmedEventNotificationRequest
+    ) -> None:
+        if self.event_handler:
+            await self.event_handler(apdu)
+        await self.response(SimpleAckPDU(context=apdu))
+
+    async def do_UnconfirmedEventNotificationRequest(
+        self, apdu: UnconfirmedEventNotificationRequest
+    ) -> None:
+        if self.event_handler:
+            await self.event_handler(apdu)
 
     async def do_ConfirmedCOVNotificationRequest(
         self, apdu: ConfirmedCOVNotificationRequest
@@ -132,6 +150,7 @@ class BacnetDriver:
         self._semaphore = asyncio.Semaphore(polling.max_concurrent_requests)
         self._locks: dict[int, asyncio.Lock] = {}
         self._callbacks: list[ReadingCallback] = []
+        self._event_callbacks: list[EventCallback] = []
         self._rpm_unsupported: set[int] = set()
         self._process_ids: dict[Any, int] = {}
         self._cov_points: dict[tuple[str, int], PointRef] = {}
@@ -163,6 +182,7 @@ class BacnetDriver:
             port.fdSubscriptionLifetime = net.bbmd.ttl
         app = CollectorApplication.from_object_list([device, port])
         app.cov_handler = self._on_cov
+        app.event_handler = self._on_event
         self._app = app
 
     async def stop(self) -> None:
@@ -173,6 +193,10 @@ class BacnetDriver:
     def subscribe(self, callback: ReadingCallback) -> None:
         """Enregistre un rappel appelé pour chaque notification COV reçue."""
         self._callbacks.append(callback)
+
+    def subscribe_events(self, callback: EventCallback) -> None:
+        """Enregistre un rappel pour chaque Event Notification reçue (règles `bacnet_event`)."""
+        self._event_callbacks.append(callback)
 
     @property
     def app(self) -> CollectorApplication:
@@ -434,3 +458,15 @@ class BacnetDriver:
         )
         for callback in self._callbacks:
             await callback(reading)
+
+    async def _on_event(self, apdu: Any) -> None:
+        notice = EventNotice(
+            device_instance=int(apdu.initiatingDeviceIdentifier[1]),
+            object_type=str(apdu.eventObjectIdentifier[0]),
+            object_instance=int(apdu.eventObjectIdentifier[1]),
+            to_state=str(apdu.toState),
+            from_state=str(apdu.fromState) if apdu.fromState is not None else None,
+            message=str(apdu.messageText) if apdu.messageText is not None else None,
+        )
+        for callback in self._event_callbacks:
+            await callback(notice)

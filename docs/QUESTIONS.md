@@ -100,3 +100,44 @@ Décisions prises par défaut (option la plus simple) faute de précision dans S
     borner la mémoire sur 7 et 30 jours. Les courbes s'ajoutent à un synoptique au Jalon 6.
 28. **Mesures de performance** : le job CI `performance` publie chaque mesure en annotation
     (insertion, compression, durées des requêtes 30 jours, débit d'écriture).
+
+## Jalon 5
+
+29. **Sémantique des règles** : `high` / `low` : `threshold` est le seuil (strict : égal ne déclenche pas)
+    et `hysteresis` l'écart de retour (la condition retombe à `seuil - hystérésis` pour `high`,
+    `seuil + hystérésis` pour `low`). `state` : `threshold` est la valeur attendue (1 pour un défaut
+    binaire, l'index pour un multi-état). `stale` : `threshold` est la durée maximale sans nouvelle valeur,
+    en secondes (une lecture `comm_lost` ne compte pas comme nouvelle valeur). `comm_lost` : le device du
+    point est hors ligne. `bacnet_event` : le contrôleur a émis une Event Notification vers un état autre
+    que `normal` pour l'objet. Les deux derniers n'ont pas de seuil. Une mesure sans valeur (point en
+    `comm_lost`) ne déclenche ni n'efface une règle de valeur : la condition reste ce qu'elle était.
+30. **Une ligne `alarm_event` par occurrence**, mise à jour à chaque transition (états, `raised_at`,
+    `acked_at`/`acked_by`, `cleared_at`, `raised_value`). Un index unique partiel garantit une seule alarme
+    ouverte par règle. L'état `pending` n'est pas enregistré : tant que la temporisation n'est pas écoulée,
+    aucune ligne n'existe (elle repart de zéro après un redémarrage du moteur). Si la condition revient
+    avant l'acquittement d'une alarme terminée, c'est la même alarme qui redevient active.
+31. **Notifications** : une par changement d'état persistant (déclenchée, terminée, acquittée, retour à la
+    normale) et par destinataire. Canaux d'une règle (`notify`) : `email` (destinataires par défaut
+    `ALARM_EMAIL_TO`), `email:adresse`, `webhook:https://...`. Au-delà de 20 notifications par minute et par
+    destinataire, les suivantes partent en un seul message récapitulatif à la fin de la fenêtre. Un envoi en
+    échec est retenté 3 fois (1 s, 2 s) puis abandonné et journalisé : il n'est pas rejoué après un
+    redémarrage. Les webhooks sont appelés depuis le serveur : seul un ingénieur peut définir l'URL, mais
+    aucune liste blanche d'hôtes n'est appliquée.
+32. **Un seul écrivain** : le moteur est le seul à écrire `alarm_event`. Les acquittements passent par le
+    stream `cmd.alarm` (comme les écritures de consigne) : l'API attend le résultat (409 si l'état ne s'y
+    prête pas, 504 si le moteur ne répond pas). Le moteur revérifie le rôle et ignore une commande de
+    plus de 30 s.
+33. **Règle désactivée ou supprimée** : désactiver une règle qui a une alarme ouverte la clôt (état
+    `normal`). Supprimer une règle est refusé (409) tant qu'une alarme est ouverte ; l'historique clos
+    est supprimé avec la règle (les modifications restent dans `audit_log`).
+34. **Reprise** : au démarrage et à chaque rechargement (règle modifiée, ou toutes les minutes), le moteur
+    reprend les alarmes ouvertes et rattrape l'état courant avec `point_latest` et l'état des devices.
+    Après un redémarrage, une alarme dont la condition persiste ne produit aucune nouvelle notification.
+35. **Réseau du service `alarms`** : il est sur `front` en plus de `back`, car ses notifications (SMTP,
+    webhooks) sortent du serveur alors que `back` est interne. Il n'a aucun port publié.
+36. **Événements BACnet** : le collecteur reçoit les Event Notification (confirmées ou non) et les publie
+    sur `bacnet.event`. Pour qu'un contrôleur les envoie, le superviseur (instance du fichier
+    `collector.yaml`) doit figurer dans les destinataires de sa classe de notification. Sans cela, seules les
+    quatre autres formes de règles sont disponibles pour ce contrôleur.
+37. **Règles : PATCH et non PUT** ; un ingénieur uniquement (comme dans le CDC). La modification est fusionnée
+    avec l'existant puis revalidée en entier. `point_id` ne se modifie pas : créer une autre règle.

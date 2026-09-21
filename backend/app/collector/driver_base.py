@@ -83,6 +83,21 @@ class WriteResult:
 ReadingCallback = Callable[[Reading], Awaitable[None]]
 
 
+@dataclass(frozen=True)
+class EventNotice:
+    """Event Notification BACnet reçue d'un contrôleur (alarme ou retour à la normale)."""
+
+    device_instance: int
+    object_type: str
+    object_instance: int
+    to_state: str
+    from_state: str | None = None
+    message: str | None = None
+
+
+EventCallback = Callable[[EventNotice], Awaitable[None]]
+
+
 class Driver(Protocol):
     """Interface d'un driver (section 6.4). Seul BACnet est fourni en v1."""
 

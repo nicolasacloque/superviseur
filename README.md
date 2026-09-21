@@ -3,9 +3,9 @@
 Superviseur GTB open source : découverte et lecture de points BACnet/IP, historisation, alarmes,
 synoptiques HTML. Cahier des charges : [SPEC.md](SPEC.md).
 
-**Avancement : Jalon 4 (historiques et tendances).** PostgreSQL + TimescaleDB (hypertable compressée),
-Redis, collecteur BACnet/IP, simulateur de 2000 points, API REST + WebSocket avec authentification par
-rôles, widget de courbes `trend`.
+**Avancement : Jalon 5 (alarmes).** PostgreSQL + TimescaleDB (hypertable compressée), Redis, collecteur
+BACnet/IP, simulateur de 2000 points, API REST + WebSocket avec authentification par rôles, moteur
+d'alarmes (email, webhook), widgets `trend` et `alarm_list`.
 
 ## Démarrage
 
@@ -79,6 +79,27 @@ docker compose exec redis redis-cli XADD cmd.write '*' data \
 
 Arrêt : `docker compose down` (ajouter `-v` pour supprimer les données).
 
+## Alarmes
+
+Le service `alarms` évalue les règles et applique la machine à états (déclenchée non acquittée, acquittée,
+terminée non acquittée, retour à la normale). Six types de règles : `high`, `low` (seuil et hystérésis),
+`state` (valeur attendue), `stale` (aucune valeur depuis N secondes), `comm_lost` (device hors ligne),
+`bacnet_event` (Event Notification du contrôleur). Chaque règle a une temporisation (`delay_s`), une
+sévérité et des canaux de notification : `email`, `email:adresse`, `webhook:https://...`.
+
+```bash
+# Ingénieur : créer une règle (ici une alarme haute avec 30 s de temporisation)
+curl -b jar -H 'Content-Type: application/json' -d '{"point_id":"<uuid>","kind":"high","threshold":28,
+  "hysteresis":1,"delay_s":30,"severity":"critical","name":"Soufflage trop chaud",
+  "notify":["email","webhook:https://hooks.example.org/x"]}' $B/alarm-rules
+curl -b jar "$B/alarms?state=open"                # alarmes ouvertes (open, active, unacked, closed, all)
+curl -b jar -X POST $B/alarms/<id>/ack            # acquittement (opérateur)
+```
+
+Les transitions sont aussi poussées sur le WebSocket (`{"type":"alarm","event":{...}}`). Configuration
+des emails dans `.env` (`SMTP_HOST`, `ALARM_EMAIL_TO`...). Au-delà de 20 notifications par minute, elles
+sont regroupées en un seul message.
+
 ## Historique
 
 `sample` est une hypertable TimescaleDB (chunks de 1 jour) : compression après 7 jours, rétention de
@@ -146,10 +167,11 @@ Nouvelle migration : `alembic revision --autogenerate -m "description"` depuis `
 ## Structure
 
 ```
-docker-compose.yml     db, redis, api, collector, simulator (profil sim)
+docker-compose.yml     db, redis, api, collector, alarms, simulator (profil sim)
 config/                collector.yaml (réseau réel), collector.sim.yaml (simulateur)
 simulator/             simulateur BACnet (bacpypes3), défauts injectables
 backend/app/collector/ driver BACnet, découverte, polling, COV, écriture, historisation
+backend/app/alarms/    moteur d'alarmes : règles, machine à états, notifications
 backend/app/common/    configuration, logs JSON, enums partagés
 backend/app/db/        modèles SQLAlchemy, session
 backend/app/api/       application FastAPI : routes REST, WebSocket, audit

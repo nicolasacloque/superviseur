@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
 import time
 import uuid
-from typing import Any, NoReturn
+from typing import NoReturn
 
 from fastapi import APIRouter, HTTPException, Request, status
 
 from app.api.audit import record_audit
+from app.api.commands import send_and_wait
 from app.api.deps import RedisDep, SessionDep, SettingsDep, UserDep
 from app.api.schemas import WriteRequest, WriteResponse
 from app.auth.permissions import has_role
@@ -21,8 +20,6 @@ from app.db.models import Point
 UNPROCESSABLE = 422  # nom du code HTTP variable selon les versions de Starlette
 
 router = APIRouter(tags=["write"])
-
-STREAM_MAX_LEN = 10_000
 
 
 @router.post("/points/{point_id}/write", response_model=WriteResponse)
@@ -81,7 +78,13 @@ async def write_point(
         "user_id": str(user.id),
         "issued_at": time.time(),  # le collecteur ignore les commandes trop anciennes
     }
-    result = await _send_and_wait(redis, command, settings.write_timeout_s)
+    result = await send_and_wait(
+        redis,
+        STREAM_WRITE,
+        write_result_channel(command_id),
+        command,
+        settings.write_timeout_s,
+    )
     if result is None:
         # Le collecteur ne répond pas : la commande périmera d'elle-même côté collecteur.
         await refuse(status.HTTP_504_GATEWAY_TIMEOUT, "le collecteur n'a pas répondu", label)
@@ -91,28 +94,3 @@ async def write_point(
             status.HTTP_502_BAD_GATEWAY, result.get("message") or "écriture refusée"
         )
     return WriteResponse(status="ok", command_id=command_id)
-
-
-async def _send_and_wait(
-    redis: Any, command: dict[str, Any], timeout_s: float
-) -> dict[str, Any] | None:
-    """Publie la commande puis attend son résultat ; `None` si le délai est dépassé."""
-    pubsub = redis.pubsub()
-    # Abonnement avant l'envoi : le résultat ne peut pas arriver avant qu'on l'écoute.
-    await pubsub.subscribe(write_result_channel(command["command_id"]))
-    try:
-        await redis.xadd(
-            STREAM_WRITE, {"data": json.dumps(command)}, maxlen=STREAM_MAX_LEN, approximate=True
-        )
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout_s
-        while (remaining := deadline - loop.time()) > 0:
-            message = await pubsub.get_message(
-                ignore_subscribe_messages=True, timeout=min(remaining, 1.0)
-            )
-            if message is not None:
-                payload: dict[str, Any] = json.loads(message["data"])
-                return payload
-        return None
-    finally:
-        await pubsub.aclose()

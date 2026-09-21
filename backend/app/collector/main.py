@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import signal
 from pathlib import Path
@@ -15,11 +16,13 @@ from app.collector.config import CollectorConfig, load_config
 from app.collector.config_sync import PointConfigSync
 from app.collector.cov import CovManager
 from app.collector.discovery import run_discovery
+from app.collector.driver_base import EventNotice
 from app.collector.poller import Poller
 from app.collector.recorder import Recorder
 from app.collector.registry import Registry
 from app.collector.store import DbStore
 from app.collector.writer import Writer
+from app.common.bus import CHANNEL_BACNET_EVENT
 from app.common.config import get_settings
 from app.common.logging import configure_logging
 from app.db.session import create_engine, create_session_factory
@@ -49,6 +52,19 @@ async def run(config: CollectorConfig) -> None:
     driver = BacnetDriver(config.network, config.discovery, config.polling, config.cov)
     await driver.start()
     driver.subscribe(recorder.handle)
+
+    async def publish_event(notice: EventNotice) -> None:
+        payload = {
+            "device_instance": notice.device_instance,
+            "object_type": notice.object_type,
+            "object_instance": notice.object_instance,
+            "to_state": notice.to_state,
+            "from_state": notice.from_state,
+            "message": notice.message,
+        }
+        await redis.publish(CHANNEL_BACNET_EVENT, json.dumps(payload))
+
+    driver.subscribe_events(publish_event)
 
     network_id = await store.ensure_network(config.network)
 

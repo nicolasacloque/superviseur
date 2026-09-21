@@ -16,6 +16,7 @@ from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection, make_url
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from app.db.models import Base
@@ -145,3 +146,40 @@ async def test_retention_follows_the_configured_days(engine: AsyncEngine) -> Non
     assert await drop_after() is None
     await sync_retention(engine, 730)
     assert await drop_after() == "730 days"
+
+
+async def test_only_one_alarm_can_be_open_per_rule(engine: AsyncEngine) -> None:
+    await _upgrade()
+    async with engine.begin() as conn:
+        network = await conn.scalar(
+            text("INSERT INTO network (name, bind_ip) VALUES ('n', '127.0.0.1') RETURNING id")
+        )
+        device = await conn.scalar(
+            text(
+                "INSERT INTO device (network_id, instance, name, address) "
+                "VALUES (:n, 1, 'd', 'a') RETURNING id"
+            ),
+            {"n": network},
+        )
+        point = await conn.scalar(
+            text(
+                "INSERT INTO point (device_id, object_type, object_instance, name) "
+                "VALUES (:d, 'analog-input', 1, 'p') RETURNING id"
+            ),
+            {"d": device},
+        )
+        rule = await conn.scalar(
+            text(
+                "INSERT INTO alarm_rule (point_id, kind, severity, threshold) "
+                "VALUES (:p, 'high', 'critical', 1) RETURNING id"
+            ),
+            {"p": point},
+        )
+    insert = text("INSERT INTO alarm_event (rule_id, raised_at, state) VALUES (:r, now(), :s)")
+    async with engine.begin() as conn:
+        await conn.execute(insert, {"r": rule, "s": "active_unacked"})
+        await conn.execute(insert, {"r": rule, "s": "normal"})  # les alarmes closes s'accumulent
+        await conn.execute(insert, {"r": rule, "s": "normal"})
+    with pytest.raises(IntegrityError):
+        async with engine.begin() as conn:
+            await conn.execute(insert, {"r": rule, "s": "cleared_unacked"})  # une seconde ouverte

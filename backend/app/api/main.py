@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.api.deps import jwt_secret
 from app.api.health import router as health_router
-from app.api.routes import audit, auth, devices, points, write, ws
+from app.api.routes import alarms, audit, auth, devices, points, write, ws
 from app.common.config import Settings, get_settings
 from app.common.logging import configure_logging
 from app.db.session import create_engine, create_session_factory
@@ -62,7 +62,7 @@ def create_app(
         openapi_url="/api/openapi.json",
     )
     api = APIRouter(prefix="/api/v1")
-    for module in (auth, devices, points, write, audit):
+    for module in (auth, devices, points, write, alarms, audit):
         api.include_router(module.router)
     api.include_router(health_router)
     api.include_router(ws.router)

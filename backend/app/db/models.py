@@ -1,7 +1,7 @@
 """Modèles SQLAlchemy (section 5 du cahier des charges).
 
-La table `sample` est créée ici comme table ordinaire ; sa conversion en
-hypertable TimescaleDB (chunks, compression, rétention) relève du Jalon 4.
+La table `sample` est déclarée ici comme table ordinaire : sa conversion en hypertable
+TimescaleDB (chunks, compression, rétention) est faite par la migration 0002.
 """
 
 from __future__ import annotations
@@ -162,6 +162,7 @@ class AlarmRule(Base):
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     point_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("point.id", ondelete="CASCADE"))
+    name: Mapped[str | None] = mapped_column(String(255))
     kind: Mapped[str] = mapped_column(String(32))
     threshold: Mapped[float | None] = mapped_column(Double)
     hysteresis: Mapped[float] = mapped_column(Double, server_default=text("0"))
@@ -172,7 +173,19 @@ class AlarmRule(Base):
 
 
 class AlarmEvent(Base):
+    """Une occurrence d'alarme, mise à jour à chaque transition (section 9.2)."""
+
     __tablename__ = "alarm_event"
+    __table_args__ = (
+        # Une seule alarme ouverte par règle : garde-fou contre deux moteurs ou une relance.
+        Index(
+            "uq_alarm_event_open_rule",
+            "rule_id",
+            unique=True,
+            postgresql_where=text("state <> 'normal'"),
+        ),
+        Index("ix_alarm_event_state_raised", "state", "raised_at"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     rule_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("alarm_rule.id", ondelete="CASCADE"))
@@ -181,6 +194,8 @@ class AlarmEvent(Base):
     acked_by: Mapped[str | None] = mapped_column(String(64))
     cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     state: Mapped[str] = mapped_column(String(32))
+    # Valeur du point au déclenchement (contexte des notifications).
+    raised_value: Mapped[float | None] = mapped_column(Double)
 
 
 class Synoptic(Base):

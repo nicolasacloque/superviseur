@@ -105,7 +105,7 @@ jobs:
       - run: npm run build
 
   stack:
-    # Critères d'acceptation des Jalons 2 et 3 sur la vraie stack Docker, avec le simulateur.
+    # Critères d'acceptation des Jalons 2, 3 et 5 sur la vraie stack Docker, avec le simulateur.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -161,6 +161,34 @@ jobs:
           done
           test "$value" = "42.5"
           test "$(write ci-op '{"value":null,"priority":8}')" = 200
+      - name: "Alarmes - règle, déclenchement, acquittement"
+        run: |
+          B=http://127.0.0.1:8000/api/v1
+          PW=mot-de-passe-ci-123
+          docker compose exec -T -e NEW_USER_PASSWORD=$PW api python -m app.auth.cli create-user ci-eng --role engineer
+          login() { curl -fsS -c "$1.jar" -H 'Content-Type: application/json' \
+            -d "{\"login\":\"$1\",\"password\":\"$PW\"}" $B/auth/login > /dev/null; }
+          login ci-eng
+          login ci-op
+          POINT=$(curl -fsS -b ci-op.jar "$B/points?q=-AI-&limit=1" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['items'][0]['id'])")
+          # Seuil très bas : la première valeur reçue déclenche la règle.
+          RULE=$(curl -fsS -b ci-eng.jar -H 'Content-Type: application/json' \
+            -d "{\"point_id\":\"$POINT\",\"kind\":\"high\",\"threshold\":-1000,\"severity\":\"critical\",\"name\":\"CI\"}" \
+            $B/alarm-rules | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          test "$(curl -s -o /dev/null -w '%{http_code}' -b ci-op.jar $B/alarm-rules)" = 403
+          ALARM=""
+          for i in $(seq 1 40); do
+            ALARM=$(curl -fsS -b ci-op.jar "$B/alarms?state=active" \
+              | python3 -c "import sys,json; items=json.load(sys.stdin)['items']; print(items[0]['id'] if items else '')")
+            [ -n "$ALARM" ] && break
+            sleep 1
+          done
+          test -n "$ALARM"
+          state=$(curl -fsS -b ci-op.jar -X POST $B/alarms/$ALARM/ack \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['alarm']['state'])")
+          test "$state" = "active_acked"
+          curl -fsS -b ci-eng.jar -X PATCH -H 'Content-Type: application/json' -d '{"enabled":false}' $B/alarm-rules/$RULE > /dev/null
       - name: Logs en cas d'échec
         if: failure()
         run: docker compose --profile sim logs --tail 200

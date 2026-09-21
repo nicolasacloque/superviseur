@@ -30,6 +30,15 @@ class Settings(BaseSettings):
 
     bacnet_bind_ip: str | None = None
 
+    # Notifications d'alarmes (section 9.3).
+    smtp_starttls: bool = True
+    alarm_email_from: str = "supervision@localhost"
+    # Destinataires du canal `email` sans adresse précise, séparés par des virgules.
+    alarm_email_to: str = ""
+    # Au-delà de N notifications par fenêtre, les suivantes sont regroupées en un seul message.
+    alarm_digest_threshold: int = 20
+    alarm_digest_window_s: float = 60.0
+
     # Authentification et écriture (section 11).
     cookie_secure: bool = True
     access_token_minutes: int = 15

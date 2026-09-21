@@ -30,12 +30,14 @@ class Severity(StrEnum):
 
 
 class AlarmState(StrEnum):
-    """États persistants d'une alarme (Pending reste en mémoire ; Normal = alarme close)."""
+    """États d'une alarme (section 9.2). PENDING n'existe qu'en mémoire : rien n'est enregistré tant
+    que la temporisation n'est pas écoulée ; NORMAL en base désigne une alarme close."""
 
+    NORMAL = "normal"
+    PENDING = "pending"
     ACTIVE_UNACKED = "active_unacked"
     ACTIVE_ACKED = "active_acked"
     CLEARED_UNACKED = "cleared_unacked"
-    NORMAL = "normal"
 
 
 class RoleName(StrEnum):

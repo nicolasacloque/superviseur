@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.alarms.rules import THRESHOLD_KINDS
+from app.alarms.senders import valid_webhook_url
+from app.common.models import AlarmKind, Severity
 
 
 class UserOut(BaseModel):
@@ -140,3 +145,108 @@ class AuditOut(BaseModel):
     before: dict[str, Any] | None
     after: dict[str, Any] | None
     ip: str | None
+
+
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+MAX_CHANNELS = 10
+
+
+def validate_channel(channel: str) -> str:
+    """`email` (destinataires par défaut), `email:adresse` ou `webhook:https://...`."""
+    kind, _, target = channel.partition(":")
+    if kind == "email" and (target == "" or _EMAIL.match(target)):
+        return channel
+    if kind == "webhook" and valid_webhook_url(target):
+        return channel
+    raise ValueError(f"canal invalide : {channel!r} (email, email:adresse ou webhook:url)")
+
+
+class AlarmRuleIn(BaseModel):
+    """Règle d'alarme (section 9.1)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    point_id: uuid.UUID
+    name: str | None = Field(default=None, max_length=255)
+    kind: AlarmKind
+    # high/low : seuil ; state : valeur attendue (ex. 1) ; stale : durée maximale en secondes.
+    threshold: float | None = None
+    hysteresis: float = Field(default=0.0, ge=0)
+    delay_s: int = Field(default=0, ge=0, le=86400)
+    severity: Severity
+    notify: list[str] = Field(default_factory=list, max_length=MAX_CHANNELS)
+    enabled: bool = True
+
+    @field_validator("notify")
+    @classmethod
+    def _channels(cls, value: list[str]) -> list[str]:
+        return [validate_channel(channel) for channel in value]
+
+    @model_validator(mode="after")
+    def _threshold_required(self) -> AlarmRuleIn:
+        if self.kind in THRESHOLD_KINDS and self.threshold is None:
+            raise ValueError(f"threshold est obligatoire pour une règle {self.kind.value}")
+        if self.kind is AlarmKind.STALE and (self.threshold or 0) <= 0:
+            raise ValueError("threshold (secondes) doit être positif pour une règle stale")
+        return self
+
+
+class AlarmRuleUpdate(BaseModel):
+    """Modification partielle : les champs absents restent inchangés."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, max_length=255)
+    kind: AlarmKind | None = None
+    threshold: float | None = None
+    hysteresis: float | None = Field(default=None, ge=0)
+    delay_s: int | None = Field(default=None, ge=0, le=86400)
+    severity: Severity | None = None
+    notify: list[str] | None = Field(default=None, max_length=MAX_CHANNELS)
+    enabled: bool | None = None
+
+
+class AlarmRuleOut(BaseModel):
+    id: uuid.UUID
+    point_id: uuid.UUID
+    point_name: str
+    path: str | None
+    name: str | None
+    kind: str
+    threshold: float | None
+    hysteresis: float
+    delay_s: int
+    severity: str
+    notify: list[str]
+    enabled: bool
+
+
+class AlarmOut(BaseModel):
+    id: uuid.UUID
+    rule_id: uuid.UUID
+    rule_name: str | None
+    kind: str
+    severity: str
+    state: str
+    point_id: uuid.UUID
+    point_name: str
+    path: str | None
+    unit: str | None
+    threshold: float | None
+    value: float | None
+    raised_at: datetime
+    acked_at: datetime | None
+    acked_by: str | None
+    cleared_at: datetime | None
+
+
+class AlarmPage(BaseModel):
+    items: list[AlarmOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class AckResponse(BaseModel):
+    status: Literal["ok"]
+    alarm: AlarmOut
