@@ -48,7 +48,61 @@ jobs:
       - run: ruff check . ../simulator
       - run: ruff format --check . ../simulator
       - run: mypy
-      - run: pytest --cov=app --cov-report=term-missing
+      - run: pytest -m "not perf" --cov=app --cov-report=term-missing
+
+  performance:
+    # Critères du Jalon 4 : 2000 points sur 30 jours, compression, débit d'écriture (TimescaleDB).
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      db:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: supervisor_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/supervisor_test
+      TEST_REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/pyproject.toml
+            simulator/pyproject.toml
+      - run: pip install -e ../simulator -e ".[dev]"
+      - run: pytest -m perf -s
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
 
   stack:
     # Critères d'acceptation des Jalons 2 et 3 sur la vraie stack Docker, avec le simulateur.

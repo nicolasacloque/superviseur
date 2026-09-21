@@ -4,6 +4,7 @@ Nécessite TimescaleDB (donc la CI) : la base est créée par les migrations, co
 """
 
 import asyncio
+import os
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -22,7 +23,15 @@ from tests.api_harness import logged_in, make_user, running_api
 from tests.conftest import TEST_DATABASE_URL
 from tests.helpers import alembic_config
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.perf]
+
+
+def report(title: str, message: str) -> None:
+    """Affiche une mesure ; sur GitHub Actions, en annotation visible sans ouvrir les journaux."""
+    print(f"\n{title} : {message}")
+    if os.environ.get("GITHUB_ACTIONS"):
+        print(f"::notice title={title}::{message}")
+
 
 POINTS = 2000
 DAYS = 30
@@ -112,7 +121,11 @@ async def test_30_day_history_of_one_point_among_2000_answers_in_under_a_second(
     )
     started = time.monotonic()
     point_id = await populate(engine, base)
-    print(f"\n{POINTS * DAYS * 96} échantillons insérés en {time.monotonic() - started:.0f} s")
+    report(
+        "Insertion",
+        f"{POINTS * DAYS * 96:,} échantillons ({POINTS} points x {DAYS} jours) en "
+        f"{time.monotonic() - started:.0f} s",
+    )
 
     # Compression des chunks de plus de 7 jours (la politique le fait chaque nuit).
     started = time.monotonic()
@@ -123,7 +136,9 @@ async def test_30_day_history_of_one_point_among_2000_answers_in_under_a_second(
                 "FROM show_chunks('sample', older_than => INTERVAL '7 days') c"
             )
         )
-    print(f"compression en {time.monotonic() - started:.0f} s")
+    report(
+        "Compression", f"chunks de plus de 7 jours compressés en {time.monotonic() - started:.0f} s"
+    )
 
     async with engine.connect() as conn:
         compressed_chunks = await conn.scalar(
@@ -147,9 +162,10 @@ async def test_30_day_history_of_one_point_among_2000_answers_in_under_a_second(
                 "WHERE hypertable_name = 'sample'"
             )
         )
-    print(
+    report(
+        "Compression",
         f"{compressed_chunks}/{total_chunks} chunks compressés, "
-        f"ratio {stats.before / stats.after:.1f}"
+        f"ratio {stats.before / stats.after:.1f}",
     )
     assert compressed_chunks >= DAYS - 9  # tout sauf la semaine récente
     assert stats.before / stats.after > 1.5  # la compression est effective
@@ -171,7 +187,10 @@ async def test_30_day_history_of_one_point_among_2000_answers_in_under_a_second(
             started = time.monotonic()
             response = await client.get(f"/points/{point_id}/history", params={**window, **params})
             elapsed = time.monotonic() - started
-            print(f"historique 30 jours ({name}) : {elapsed * 1000:.0f} ms")
+            report(
+                f"Historique 30 jours ({name})",
+                f"{elapsed * 1000:.0f} ms, {len(response.json()['items'])} points",
+            )
             assert response.status_code == 200, response.text
             body = response.json()
             if expected is not None:
@@ -221,5 +240,5 @@ async def test_history_writes_reach_at_least_2000_samples_per_second(
     started = time.monotonic()
     await DbStore(sessions).write_samples(samples, latest)
     rate = len(samples) / (time.monotonic() - started)
-    print(f"\nécriture : {rate:,.0f} échantillons/s")
+    report("Écriture de l'historique", f"{rate:,.0f} échantillons/s (cible : 2 000)")
     assert rate >= 2000

@@ -1,0 +1,22 @@
+{
+  "name": "supervisor-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Superviseur BACnet/IP : widgets des synoptiques (Jalon 4 : trend)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "uplot": "^1.6.32"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
+  }
+}

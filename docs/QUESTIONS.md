@@ -68,7 +68,35 @@ Décisions prises par défaut (option la plus simple) faute de précision dans S
     le jeton expire (le client renouvelle puis se reconnecte). Ping serveur toutes les 30 s (uvicorn) et
     `{"action":"ping"}` -> `{"type":"pong"}` côté application. Les messages d'alarme (`alarm.event`) sont
     déjà relayés ; le moteur d'alarmes arrive au Jalon 5.
-21. **Historique** : agrégation par `date_bin` (PostgreSQL 14+), donc sans TimescaleDB ; le Jalon 4
-    passera à `time_bucket` et aux agrégats continus. Maximum 20 000 lignes par réponse.
+21. **Historique** : agrégation par `date_bin` (PostgreSQL 14+) ; le Jalon 4 utilise `time_bucket`
+    quand TimescaleDB est présent (voir 23). Maximum 20 000 lignes par réponse.
 22. **Pas encore fait** : `POST /discovery/run` (nécessite un canal de commande vers le collecteur) et
     `docs/API.md` (généré depuis OpenAPI en fin de projet ; la doc interactive est sur `/api/docs`).
+
+## Jalon 4
+
+23. **Hypertable** : `sample` en chunks de 1 jour, compression après 7 jours segmentée par point
+    (`compress_segmentby = point_id`, tri `ts DESC`), rétention 730 jours par défaut ; `RETENTION_DAYS`
+    l'ajuste au démarrage de l'API (0 = conservation illimitée). Aucun index sur `ts` seul : la clé
+    primaire `(point_id, ts)` sert toutes les requêtes. La migration 0002 n'est pas réversible vers une
+    table ordinaire : son downgrade retire les politiques et décompresse, la table est supprimée par
+    le downgrade de 0001. `time_bucket` et `date_bin` partent de la même origine (2000-01-01) et
+    donnent les mêmes tranches ; la première sert avec TimescaleDB, la seconde en repli.
+24. **Pas d'agrégat continu** : la requête « 30 jours d'un point » (2880 échantillons) répond en quelques
+    dizaines de millisecondes sur les chunks compressés ; un agrégat continu n'apporterait que de la
+    complexité. À reconsidérer si les périodes affichées dépassent l'année.
+25. **`bucket=auto`** : le serveur choisit la plus petite tranche ronde (5 s, 10 s, 30 s, 1 m, 5 m, 15 m,
+    30 m, 1 h, 3 h, 6 h, 12 h, 1 j, puis multiples de jours) qui donne au plus `max_points` tranches
+    (500 par défaut) ; en dessous d'une seconde par tranche, il renvoie les échantillons bruts.
+26. **Réglage des points** : `PATCH /points/{id}` (ingénieur) règle `deadband`, `max_interval_s`,
+    `poll_interval_s`, `write_min`/`write_max`, `path` et `tags` ; `name` et `description` restent ceux
+    du contrôleur (une redécouverte les réécrirait). Chaque changement est audité (avant / après) et le
+    collecteur recharge deadband et intervalles sans redémarrer (canal Redis `point.config`).
+27. **Widget `trend`** : première brique du dossier `frontend/` (TypeScript + Vite + uPlot). Il ne
+    dépend que de deux interfaces (`HistoryApi`, `LiveApi`) et d'un moteur de tracé injectable : les
+    tests n'ont besoin ni de navigateur ni d'API. Séries limitées à 8, un seul axe, couleurs de la
+    palette de référence dans un ordre fixe, légende avec dernière valeur, infobulle, vue tableau,
+    rendu limité à 10 par seconde. Les valeurs temps réel sont regroupées (1000 points par fenêtre) pour
+    borner la mémoire sur 7 et 30 jours. Les courbes s'ajoutent à un synoptique au Jalon 6.
+28. **Mesures de performance** : le job CI `performance` publie chaque mesure en annotation
+    (insertion, compression, durées des requêtes 30 jours, débit d'écriture).

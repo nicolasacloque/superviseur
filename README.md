@@ -3,8 +3,9 @@
 Superviseur GTB open source : découverte et lecture de points BACnet/IP, historisation, alarmes,
 synoptiques HTML. Cahier des charges : [SPEC.md](SPEC.md).
 
-**Avancement : Jalon 3 (API, temps réel, écriture).** PostgreSQL + TimescaleDB, Redis, collecteur
-BACnet/IP, simulateur de 2000 points, API REST + WebSocket avec authentification par rôles.
+**Avancement : Jalon 4 (historiques et tendances).** PostgreSQL + TimescaleDB (hypertable compressée),
+Redis, collecteur BACnet/IP, simulateur de 2000 points, API REST + WebSocket avec authentification par
+rôles, widget de courbes `trend`.
 
 ## Démarrage
 
@@ -39,6 +40,9 @@ B=http://127.0.0.1:8000/api/v1
 curl -c jar -H 'Content-Type: application/json' -d '{"login":"admin","password":"..."}' $B/auth/login
 curl -b jar "$B/points?q=temp&limit=5"                      # recherche paginée (path, tag, device, q)
 curl -b jar "$B/points/<id>/history?bucket=1h"              # moyenne, min, max par tranche
+curl -b jar "$B/points/<id>/history?bucket=auto&max_points=500"  # tranche choisie par le serveur
+curl -b jar -X PATCH -H 'Content-Type: application/json' \
+     -d '{"deadband":0.5,"max_interval_s":300}' $B/points/<id>   # réglage d'un point (ingénieur)
 curl -b jar -H 'Content-Type: application/json' \
      -d '{"value":21.5,"priority":8}' $B/points/<id>/write   # "value": null relâche la priorité
 ```
@@ -75,6 +79,30 @@ docker compose exec redis redis-cli XADD cmd.write '*' data \
 
 Arrêt : `docker compose down` (ajouter `-v` pour supprimer les données).
 
+## Historique
+
+`sample` est une hypertable TimescaleDB (chunks de 1 jour) : compression après 7 jours, rétention de
+`RETENTION_DAYS` jours (730 par défaut, 0 = illimitée). Un échantillon n'est enregistré que si la valeur
+change de plus que la **deadband** du point ou si `max_interval_s` s'est écoulé (réglables par
+`PATCH /points/{id}`). `GET /points/{id}/history` renvoie les échantillons bruts ou une agrégation
+(`bucket=5m`, `1h`... ou `auto`).
+
+## Frontend
+
+`frontend/` contient les widgets des synoptiques (TypeScript, Vite, uPlot). Le premier, `trend`, trace
+jusqu'à 8 points sur 15 min à 30 jours, en direct par WebSocket.
+
+```bash
+cd frontend
+npm ci
+npm test              # tests unitaires (vitest)
+npm run dev           # page de démonstration : http://localhost:5173 (données simulées)
+npm run build         # vérification des types puis build
+```
+
+Page de démonstration sur l'API réelle : `?api=1&points=<uuid>,<uuid>` (le proxy Vite envoie `/api`
+vers `127.0.0.1:8000`).
+
 ## Variables d'environnement
 
 | Variable | Rôle |
@@ -85,7 +113,7 @@ Arrêt : `docker compose down` (ajouter `-v` pour supprimer les données).
 | `COOKIE_SECURE` | Cookies de session en `Secure` (défaut `true`) |
 | `WRITE_TIMEOUT_S` | Attente de la réponse du collecteur à une écriture (défaut 10) |
 | `LOG_LEVEL` | Niveau de logs (défaut `INFO`), format JSON sur stdout |
-| `RETENTION_DAYS` | Rétention de l'historique (défaut 730) |
+| `RETENTION_DAYS` | Rétention de l'historique en jours (défaut 730, 0 = illimitée) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | Notifications email (Jalon 5) |
 | `BACNET_BIND_IP` | Interface du collecteur (Jalon 2) |
 
@@ -126,6 +154,7 @@ backend/app/common/    configuration, logs JSON, enums partagés
 backend/app/db/        modèles SQLAlchemy, session
 backend/app/api/       application FastAPI : routes REST, WebSocket, audit
 backend/app/auth/      mots de passe argon2id, JWT, rôles, CLI utilisateurs
-backend/alembic/       migrations (0001 = schéma initial + rôles)
+backend/alembic/       migrations (0001 = schéma + rôles, 0002 = hypertable et compression)
+frontend/              widgets des synoptiques (widget trend), page de démonstration
 docs/QUESTIONS.md      décisions par défaut à confirmer
 ```

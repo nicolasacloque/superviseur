@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Widget trend</title>
+    <style>
+      :root { color-scheme: light; --page: #f9f9f7; --ink: #0b0b0b; --ink-2: #52514e; --line: #e1e0d9; }
+      :root[data-theme="dark"] { color-scheme: dark; --page: #0d0d0d; --ink: #ffffff; --ink-2: #c3c2b7; --line: #2c2c2a; }
+      @media (prefers-color-scheme: dark) {
+        :root:where(:not([data-theme="light"])) { color-scheme: dark; --page: #0d0d0d; --ink: #ffffff; --ink-2: #c3c2b7; --line: #2c2c2a; }
+      }
+      body { margin: 0; padding: 16px; background: var(--page); color: var(--ink); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+      header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+      h1 { margin: 0 16px 0 0; font-size: 18px; }
+      header label, header button { color: var(--ink-2); font: inherit; }
+      header button, header select { font: inherit; color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+      main { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+      .cell { height: 340px; }
+      .cell--wide { grid-column: 1 / -1; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Widget trend</h1>
+      <label>Thème
+        <select id="theme"><option value="auto">Automatique</option><option value="light">Clair</option><option value="dark">Sombre</option></select>
+      </label>
+      <button id="cut" type="button">Couper le direct</button>
+      <span id="mode"></span>
+    </header>
+    <main id="widgets"></main>
+    <script type="module" src="/src/dev/main.ts"></script>
+  </body>
+</html>
