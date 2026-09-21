@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 
 from app.api.audit import record_audit
 from app.api.commands import send_and_wait
-from app.api.deps import RedisDep, SessionDep, SettingsDep, UserDep
+from app.api.deps import RedisDep, SessionDep, SettingsDep, UserDep, checked_in_handler
 from app.api.schemas import WriteRequest, WriteResponse
 from app.auth.permissions import has_role
 from app.common.bus import STREAM_WRITE, write_result_channel
@@ -23,6 +23,7 @@ router = APIRouter(tags=["write"])
 
 
 @router.post("/points/{point_id}/write", response_model=WriteResponse)
+@checked_in_handler(RoleName.OPERATOR)
 async def write_point(
     point_id: uuid.UUID,
     body: WriteRequest,

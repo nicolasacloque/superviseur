@@ -14,6 +14,11 @@ export const OPERATOR: Account = {
   password: process.env.E2E_PASSWORD ?? 'mot-de-passe-e2e-123',
 }
 
+export const ADMIN: Account = {
+  login: process.env.E2E_ADMIN_LOGIN ?? 'e2e-admin',
+  password: process.env.E2E_PASSWORD ?? 'mot-de-passe-e2e-123',
+}
+
 const API = '/api/v1'
 
 export interface Point {

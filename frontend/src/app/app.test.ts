@@ -67,6 +67,9 @@ function makeApi(): AppApi {
     },
     saveSynoptic: async () => { throw new Error('non utilisé') },
     deleteSynoptic: async (id: string) => { deleted.push(id) },
+    users: async () => [{ id: 'u', login: 'alice', role: 'admin', active: true, locked: false }],
+    roles: async () => [{ name: 'admin', level: 4, description: 'tout' }],
+    audit: async () => [],
     versions: async () => [],
     version: async () => { throw new Error('non utilisé') },
     restoreVersion: async () => { throw new Error('non utilisé') },
@@ -116,6 +119,19 @@ describe('session', () => {
     await settle()
     expect(container.querySelector('form.login')).not.toBeNull()
     expect(location.hash).toBe('#/login')
+  })
+
+  it("le passage à #/login ne recrée pas le formulaire (la saisie en cours est conservée)", async () => {
+    session = null
+    start()
+    await settle()
+    const form = container.querySelector('form.login')
+    const input = container.querySelector<HTMLInputElement>('form.login input')!
+    input.value = 'alice'
+    hashListener?.() // l'événement `hashchange` que le navigateur émet après le changement d'adresse
+    await new Promise((r) => setTimeout(r, 0))
+    expect(container.querySelector('form.login')).toBe(form)
+    expect(container.querySelector<HTMLInputElement>('form.login input')!.value).toBe('alice')
   })
 
   it('une connexion réussie ouvre la liste', async () => {
@@ -258,5 +274,26 @@ describe('consultation et édition', () => {
     start('#/n-importe-quoi')
     await settle()
     expect(container.querySelector('.list__items')).not.toBeNull()
+  })
+})
+
+describe('administration', () => {
+  it("l'administrateur voit le lien et la page", async () => {
+    session = { id: 'u', login: 'alice', role: 'admin' }
+    start('#/')
+    await settle()
+    expect(button('Administration')).toBeDefined()
+    navigate('#/admin')
+    await vi.waitFor(() => expect(container.querySelector('.admin__table')).not.toBeNull())
+    expect(text()).toContain('alice (vous)')
+  })
+
+  it('un ingénieur ne voit ni le lien ni la page', async () => {
+    start('#/')
+    await settle()
+    expect(button('Administration')).toBeUndefined()
+    navigate('#/admin')
+    await vi.waitFor(() => expect(text()).toContain('réservée aux administrateurs'))
+    expect(container.querySelector('.admin__table')).toBeNull()
   })
 })

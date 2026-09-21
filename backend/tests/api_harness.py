@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.api.main import create_app
 from app.auth.passwords import hash_password
+from app.auth.tokens import password_stamp
 from app.common.config import Settings
 from app.common.models import RoleName
 from app.db.models import Device, Network, Point, PointLatest, PointTag, Role, User
@@ -90,6 +91,14 @@ async def make_user(
         session.add(user)
         await session.flush()
         return user.id
+
+
+async def stamp_of(sessions: async_sessionmaker[AsyncSession], user_id: uuid.UUID) -> str:
+    """Empreinte de mot de passe à placer dans un jeton fabriqué à la main."""
+    async with sessions() as session:
+        password_hash = await session.scalar(select(User.password_hash).where(User.id == user_id))
+    assert password_hash is not None
+    return password_stamp(password_hash)
 
 
 @asynccontextmanager

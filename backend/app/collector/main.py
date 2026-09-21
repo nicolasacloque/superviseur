@@ -16,6 +16,7 @@ from app.collector.config import CollectorConfig, load_config
 from app.collector.config_sync import PointConfigSync
 from app.collector.cov import CovManager
 from app.collector.discovery import run_discovery
+from app.collector.discovery_trigger import DiscoveryTrigger
 from app.collector.driver_base import EventNotice
 from app.collector.poller import Poller
 from app.collector.recorder import Recorder
@@ -82,10 +83,13 @@ async def run(config: CollectorConfig) -> None:
             await recorder.handle(reading)
         return result.devices
 
+    trigger = DiscoveryTrigger(redis)
+
     async def rediscover() -> None:
         found = await discover()
         while True:
-            await asyncio.sleep(config.discovery.interval_s if found else RETRY_DISCOVERY_S)
+            # Une demande manuelle interrompt l'attente ; sinon la découverte revient à son rythme.
+            await trigger.wait(config.discovery.interval_s if found else RETRY_DISCOVERY_S)
             try:
                 found = await discover()
             except Exception:
@@ -99,6 +103,7 @@ async def run(config: CollectorConfig) -> None:
         recorder.run(),
         poller.run(),
         writer.run(),
+        trigger.run(),
         rediscover(),
         config_sync.run(),
     ]

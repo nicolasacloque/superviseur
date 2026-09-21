@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.alarms.channels import valid_webhook_url
 from app.alarms.rules import THRESHOLD_KINDS
+from app.auth.passwords import MIN_PASSWORD_LENGTH
 from app.common.models import AlarmKind, Severity
 
 
@@ -250,3 +251,42 @@ class AlarmPage(BaseModel):
 class AckResponse(BaseModel):
     status: Literal["ok"]
     alarm: AlarmOut
+
+
+LOGIN_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$"
+
+
+class UserAdminOut(BaseModel):
+    id: uuid.UUID
+    login: str
+    role: str
+    active: bool
+    locked: bool = False
+
+
+class UserCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    login: str = Field(pattern=LOGIN_PATTERN)
+    password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=256)
+    role: Literal["viewer", "operator", "engineer", "admin"]
+
+
+class UserUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["viewer", "operator", "engineer", "admin"] | None = None
+    active: bool | None = None
+    password: str | None = Field(default=None, min_length=MIN_PASSWORD_LENGTH, max_length=256)
+
+    @model_validator(mode="after")
+    def _not_empty(self) -> UserUpdate:
+        if self.role is None and self.active is None and self.password is None:
+            raise ValueError("rien à modifier : role, active ou password")
+        return self
+
+
+class RoleOut(BaseModel):
+    name: str
+    level: int
+    description: str

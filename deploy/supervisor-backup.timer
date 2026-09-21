@@ -1,0 +1,11 @@
+[Unit]
+Description=Sauvegarde quotidienne du superviseur
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+# Si le serveur était éteint à 02:30, la sauvegarde est rattrapée au démarrage.
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

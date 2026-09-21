@@ -3,16 +3,20 @@
 Superviseur GTB open source : découverte et lecture de points BACnet/IP, historisation, alarmes,
 synoptiques HTML. Cahier des charges : [SPEC.md](SPEC.md).
 
-**Avancement : Jalon 5 (alarmes).** PostgreSQL + TimescaleDB (hypertable compressée), Redis, collecteur
-BACnet/IP, simulateur de 2000 points, API REST + WebSocket avec authentification par rôles, moteur
-d'alarmes (email, webhook), widgets `trend` et `alarm_list`.
+**Avancement : Jalon 7 (production).** PostgreSQL + TimescaleDB (hypertable compressée), Redis, collecteur
+BACnet/IP, simulateur de 2000 points, API REST + WebSocket avec authentification par rôles et verrouillage de
+compte, moteur d'alarmes (email, webhook), application web (viewer, éditeur de synoptiques, administration),
+Nginx en HTTPS, sauvegardes, démarrage systemd. Guides : [exploitation](docs/EXPLOITATION.md),
+[synoptiques](docs/SYNOPTIQUES.md), [API](docs/API.md).
 
 ## Démarrage
 
 ```bash
-cp .env.example .env        # mots de passe "change-me" à remplacer ; JWT_SECRET : openssl rand -hex 32
+cp .env.example .env          # mots de passe "change-me" à remplacer ; JWT_SECRET : openssl rand -hex 32
+deploy/gen-cert.sh localhost  # certificat auto-signé pour un essai (voir docs/EXPLOITATION.md pour la production)
 docker compose up -d --build --wait
-curl http://127.0.0.1:8000/health
+docker compose exec api python -m app.auth.cli create-user admin --role admin   # 10 caractères minimum
+curl -k https://localhost/health
 ```
 
 Réponse attendue :
@@ -21,33 +25,31 @@ Réponse attendue :
 {"status": "ok", "services": {"db": "ok", "redis": "ok"}}
 ```
 
-Documentation OpenAPI : http://127.0.0.1:8000/api/docs
+L'application est sur https://localhost/ (certificat auto-signé : avertissement du navigateur). Nginx est le seul
+point d'entrée : l'API n'est joignable que par lui. Documentation OpenAPI : https://localhost/api/docs.
+Pour un serveur réel : [docs/EXPLOITATION.md](docs/EXPLOITATION.md) (certificat, réseau BACnet, sauvegarde, systemd).
 
 ## API
 
-Premier utilisateur (le mot de passe est demandé ; 10 caractères minimum) :
+Les comptes se gèrent dans l'application (Administration) ou par `/users` ; le premier se crée par la ligne
+de commande ci-dessus. Rôles : `viewer` (lecture), `operator` (+ consignes, acquittement), `engineer` (+
+synoptiques, règles d'alarme, découverte), `admin` (+ utilisateurs, audit). La session repose sur deux cookies
+`HttpOnly` / `Secure` / `SameSite=Strict`. Cinq échecs de connexion verrouillent le login 15 minutes (429).
+Référence complète des routes et des rôles : [docs/API.md](docs/API.md) (générée depuis l'OpenAPI).
 
 ```bash
-docker compose exec api python -m app.auth.cli create-user admin --role admin
-```
-
-Rôles : `viewer` (lecture), `operator` (+ consignes, acquittement), `engineer`, `admin` (+ audit).
-La session repose sur deux cookies `HttpOnly` / `SameSite=Strict` ; en HTTP local, mettre
-`COOKIE_SECURE=false` dans `.env`.
-
-```bash
-B=http://127.0.0.1:8000/api/v1
-curl -c jar -H 'Content-Type: application/json' -d '{"login":"admin","password":"..."}' $B/auth/login
-curl -b jar "$B/points?q=temp&limit=5"                      # recherche paginée (path, tag, device, q)
-curl -b jar "$B/points/<id>/history?bucket=1h"              # moyenne, min, max par tranche
-curl -b jar "$B/points/<id>/history?bucket=auto&max_points=500"  # tranche choisie par le serveur
-curl -b jar -X PATCH -H 'Content-Type: application/json' \
+B=https://localhost/api/v1
+curl -k -c jar -H 'Content-Type: application/json' -d '{"login":"admin","password":"..."}' $B/auth/login
+curl -k -b jar "$B/points?q=temp&limit=5"                      # recherche paginée (path, tag, device, q)
+curl -k -b jar "$B/points/<id>/history?bucket=1h"              # moyenne, min, max par tranche
+curl -k -b jar "$B/points/<id>/history?bucket=auto&max_points=500"  # tranche choisie par le serveur
+curl -k -b jar -X PATCH -H 'Content-Type: application/json' \
      -d '{"deadband":0.5,"max_interval_s":300}' $B/points/<id>   # réglage d'un point (ingénieur)
-curl -b jar -H 'Content-Type: application/json' \
+curl -k -b jar -H 'Content-Type: application/json' \
      -d '{"value":21.5,"priority":8}' $B/points/<id>/write   # "value": null relâche la priorité
 ```
 
-Temps réel : `ws://127.0.0.1:8000/api/v1/ws` (cookie de session). Messages client :
+Temps réel : `wss://localhost/api/v1/ws` (cookie de session). Messages client :
 `{"action":"subscribe","points":["<uuid>", ...]}`, `unsubscribe`, `ping` (500 points au maximum par
 connexion). Le serveur envoie la dernière valeur connue à la souscription, puis
 `{"type":"value","point":"<uuid>","ts":"...","value":21.4,"status":"ok"}` à chaque changement.
@@ -110,14 +112,15 @@ change de plus que la **deadband** du point ou si `max_interval_s` s'est écoul�
 
 ## Synoptiques
 
-L'application web (`frontend/`, TypeScript + Vite) est servie à la racine par l'API (le build est embarqué
-dans l'image Docker) : `http://127.0.0.1:8000/`. Connexion par identifiant et mot de passe, puis :
+L'application web (`frontend/`, TypeScript + Vite) est compilée dans l'image Nginx et servie sur
+`https://localhost/`. Connexion par identifiant et mot de passe, puis :
 
 | Adresse | Page | Rôle minimal |
 |---|---|---|
 | `#/` | liste des synoptiques | viewer |
 | `#/view/<slug>` | viewer, valeurs en direct par WebSocket | viewer (commandes : operator) |
 | `#/edit/<slug>` · `#/edit/new` | éditeur | engineer |
+| `#/admin` | utilisateurs et journal d'audit | admin |
 
 **Widgets** : `value`, `label`, `gauge`, `indicator`, `switch` (commande binaire avec confirmation),
 `setpoint` (consigne bornée, priorité configurable, relâchement), `trend`, `alarm_list`, `image`, `link`
@@ -136,11 +139,11 @@ enregistrement crée une version ; `PUT /synoptics/{id}` avec `base_version` ré
 enregistré entre-temps. Restaurer une version en crée une nouvelle (l'historique n'est jamais réécrit).
 
 ```bash
-B=http://127.0.0.1:8000/api/v1
-curl -b jar $B/synoptics                              # liste
-curl -b jar $B/synoptics/cta-1                        # dernière version
-curl -b jar $B/synoptics/cta-1/versions               # historique
-curl -b jar -X POST $B/synoptics/<id>/restore/2       # restauration → nouvelle version
+B=https://localhost/api/v1
+curl -k -b jar $B/synoptics                           # liste
+curl -k -b jar $B/synoptics/cta-1                     # dernière version
+curl -k -b jar $B/synoptics/cta-1/versions            # historique
+curl -k -b jar -X POST $B/synoptics/<id>/restore/2       # restauration → nouvelle version
 ```
 
 **Développement**
@@ -149,27 +152,31 @@ curl -b jar -X POST $B/synoptics/<id>/restore/2       # restauration → nouvell
 cd frontend
 npm ci
 npm test              # tests unitaires (vitest, jsdom)
-npm run dev           # http://localhost:5173, l'API est atteinte par proxy sur 127.0.0.1:8000
+npm run dev           # http://localhost:5173 ; l'API est atteinte par proxy (API_TARGET, défaut http://127.0.0.1:8000)
 npm run build         # vérification des types puis build (index.html = application, demo.html = démo widgets)
 ```
 
 `demo.html` affiche les widgets `trend` et `alarm_list` avec des données simulées
-(`?api=1&points=<uuid>,<uuid>` pour l'API réelle).
+(`?api=1&points=<uuid>,<uuid>` pour l'API réelle). Le développement contre la pile Docker se fait avec
+`API_TARGET=https://localhost npm run dev` ; contre une API lancée à la main (`uvicorn`), avec le défaut.
 
 **Tests d'acceptation (Playwright)** : ils s'exécutent contre la stack complète avec le simulateur et
 vérifient la création de 10 widgets liés, les valeurs en direct, la commande du `switch` (valeur relue sur
 l'appareil simulé), la restauration d'une version et l'affichage 1920×1080 / tablettes.
 
 ```bash
-docker compose --profile sim up -d --build --wait     # avec COLLECTOR_CONFIG=/config/collector.sim.yaml
-for spec in "e2e-engineer engineer" "e2e-operator operator" "e2e-viewer viewer"; do set -- $spec
+deploy/gen-cert.sh localhost
+docker compose --profile sim up -d --build --wait     # avec COLLECTOR_CONFIG=/config/collector.sim.yaml dans .env
+for spec in "e2e-engineer engineer" "e2e-operator operator" "e2e-viewer viewer" "e2e-admin admin"; do set -- $spec
   docker compose exec -T -e NEW_USER_PASSWORD=mot-de-passe-e2e-123 api python -m app.auth.cli create-user "$1" --role "$2"
 done
 cd e2e && npm ci && npx playwright install chromium && npx playwright test
 ```
 
-Variables : `E2E_BASE_URL` (défaut `http://127.0.0.1:8000`), `E2E_CHANNEL=chrome` pour utiliser le Chrome
-installé, `E2E_PASSWORD`, `E2E_ENGINEER_LOGIN`, `E2E_OPERATOR_LOGIN`, `E2E_VIEWER_LOGIN`.
+Variables : `E2E_BASE_URL` (défaut `https://127.0.0.1`, certificat auto-signé accepté), `E2E_CHANNEL=chrome`
+pour utiliser le Chrome installé, `E2E_PASSWORD`, `E2E_ENGINEER_LOGIN`, `E2E_OPERATOR_LOGIN`,
+`E2E_VIEWER_LOGIN`, `E2E_ADMIN_LOGIN`. Les tests `production.spec.ts` vérifient aussi l'absence de violation de la CSP,
+le verrouillage de compte et l'administration.
 
 ## Variables d'environnement
 
@@ -184,7 +191,9 @@ installé, `E2E_PASSWORD`, `E2E_ENGINEER_LOGIN`, `E2E_OPERATOR_LOGIN`, `E2E_VIEW
 | `RETENTION_DAYS` | Rétention de l'historique en jours (défaut 730, 0 = illimitée) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | Notifications email (Jalon 5) |
 | `BACNET_BIND_IP` | Interface du collecteur (Jalon 2) |
-| `FRONTEND_DIR` | Dossier du frontend compilé servi par l'API (posé par l'image Docker ; vide = non servi) |
+| `TLS_CERT_DIR`, `HTTP_PORT`, `HTTPS_PORT`, `HTTPS_PORT_SUFFIX` | Certificat et ports de Nginx |
+| `LOGIN_MAX_FAILURES`, `LOGIN_LOCK_S` | Verrouillage de compte (défaut 5 échecs, 900 s) |
+| `FRONTEND_DIR` | Dossier d'un frontend compilé que l'API sert elle-même (développement ; en production c'est Nginx) |
 
 ## Développement
 
@@ -215,7 +224,8 @@ Nouvelle migration : `alembic revision --autogenerate -m "description"` depuis `
 ## Structure
 
 ```
-docker-compose.yml     db, redis, api, collector, alarms, simulator (profil sim)
+docker-compose.yml     db, redis, api, collector, alarms, nginx, simulator (profil sim)
+deploy/                nginx (image, TLS, en-têtes), backup.sh, restore.sh, systemd, security-check.sh
 config/                collector.yaml (réseau réel), collector.sim.yaml (simulateur)
 simulator/             simulateur BACnet (bacpypes3), défauts injectables
 backend/app/collector/ driver BACnet, découverte, polling, COV, écriture, historisation
@@ -227,5 +237,5 @@ backend/app/auth/      mots de passe argon2id, JWT, rôles, CLI utilisateurs
 backend/alembic/       migrations (0001 = schéma + rôles, 0002 = hypertable et compression)
 frontend/              application web : viewer, éditeur, widgets (uPlot), démo des widgets
 e2e/                   tests d'acceptation Playwright (Jalon 6)
-docs/QUESTIONS.md      décisions par défaut à confirmer
+docs/                  EXPLOITATION.md, SYNOPTIQUES.md, API.md (générée), QUESTIONS.md (décisions par défaut)
 ```

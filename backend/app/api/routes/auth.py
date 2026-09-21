@@ -13,6 +13,7 @@ from app.api.audit import record_audit
 from app.api.deps import (
     ACCESS_COOKIE,
     REFRESH_COOKIE,
+    LoginGuardDep,
     SessionDep,
     SettingsDep,
     UserDep,
@@ -21,16 +22,17 @@ from app.api.deps import (
 )
 from app.api.schemas import LoginRequest, UserOut
 from app.auth.passwords import burn_verification, verify_password
-from app.auth.tokens import TokenError, create_token, decode_token
+from app.auth.tokens import TokenError, create_token, decode_token, password_stamp
 from app.common.config import Settings
 from app.db.models import Role, User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 INVALID_CREDENTIALS = "identifiants invalides"
+LOCKED = "compte temporairement verrouillé : trop de tentatives, réessayez plus tard"
 
 
-def _set_cookies(response: Response, settings: Settings, user_id: uuid.UUID) -> None:
+def _set_cookies(response: Response, settings: Settings, user_id: uuid.UUID, stamp: str) -> None:
     secret = jwt_secret(settings)
     access_ttl = timedelta(minutes=settings.access_token_minutes)
     refresh_ttl = timedelta(days=settings.refresh_token_days)
@@ -41,7 +43,7 @@ def _set_cookies(response: Response, settings: Settings, user_id: uuid.UUID) -> 
     }
     response.set_cookie(
         ACCESS_COOKIE,
-        create_token(secret, user_id, "access", access_ttl),
+        create_token(secret, user_id, "access", access_ttl, stamp=stamp),
         max_age=int(access_ttl.total_seconds()),
         path="/api",
         **flags,
@@ -49,7 +51,7 @@ def _set_cookies(response: Response, settings: Settings, user_id: uuid.UUID) -> 
     # Le refresh n'est envoyé qu'aux routes d'authentification.
     response.set_cookie(
         REFRESH_COOKIE,
-        create_token(secret, user_id, "refresh", refresh_ttl),
+        create_token(secret, user_id, "refresh", refresh_ttl, stamp=stamp),
         max_age=int(refresh_ttl.total_seconds()),
         path="/api/v1/auth",
         **flags,
@@ -63,7 +65,26 @@ async def login(
     response: Response,
     session: SessionDep,
     settings: SettingsDep,
+    guard: LoginGuardDep,
 ) -> UserOut:
+    locked_for = await guard.locked_for(body.login)
+    if locked_for > 0:
+        # Même durée de traitement qu'une vraie tentative, et le bon mot de passe n'y change rien.
+        burn_verification(body.password)
+        record_audit(
+            session,
+            request,
+            user_id=None,
+            action="auth.login",
+            target=body.login,
+            after={"result": "verrouillé"},
+        )
+        await session.commit()
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            LOCKED,
+            headers={"Retry-After": str(locked_for)},
+        )
     row = (
         await session.execute(
             select(User, Role.name)
@@ -85,10 +106,21 @@ async def login(
         target=body.login,
         after={"result": "ok" if valid else "échec"},
     )
-    await session.commit()
     if not valid or user is None:
+        if await guard.record_failure(body.login) > 0:
+            record_audit(
+                session,
+                request,
+                user_id=user.id if user else None,
+                action="auth.lockout",
+                target=body.login,
+                after={"failures": settings.login_max_failures, "lock_s": settings.login_lock_s},
+            )
+        await session.commit()
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, INVALID_CREDENTIALS)
-    _set_cookies(response, settings, user.id)
+    await session.commit()
+    await guard.record_success(body.login)
+    _set_cookies(response, settings, user.id, password_stamp(user.password_hash))
     return UserOut(id=user.id, login=user.login, role=role)
 
 
@@ -100,10 +132,10 @@ async def refresh(
         claims = decode_token(jwt_secret(settings), request.cookies.get(REFRESH_COOKIE), "refresh")
     except TokenError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "session expirée") from None
-    user = await load_user(session, claims.user_id)
+    user = await load_user(session, claims.user_id, claims.stamp)
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "session expirée")
-    _set_cookies(response, settings, user.id)
+    _set_cookies(response, settings, user.id, user.stamp)
     return UserOut(id=user.id, login=user.login, role=user.role)
 
 

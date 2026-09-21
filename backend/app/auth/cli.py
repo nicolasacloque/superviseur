@@ -13,13 +13,11 @@ import sys
 
 from sqlalchemy import select
 
-from app.auth.passwords import hash_password
+from app.auth.passwords import MIN_PASSWORD_LENGTH, hash_password
 from app.common.config import get_settings
 from app.common.models import RoleName
 from app.db.models import Role, User
 from app.db.session import create_engine, create_session_factory
-
-MIN_PASSWORD_LENGTH = 10
 
 
 async def create_user(login: str, role: str, password: str, *, update: bool = False) -> str:

@@ -184,13 +184,70 @@ Décisions prises par défaut (option la plus simple) faute de précision dans S
     mises à jour temps réel sont regroupées (100 ms au plus entre deux rafraîchissements). Tant que le
     WebSocket est coupé, le synoptique est grisé ; les valeurs reviennent à la reconnexion. Les commandes (`switch`, `setpoint`) demandent une confirmation et exigent le rôle
     operator ; l'API revérifie le rôle et les bornes.
-47. **Application web servie par l'API** (`FRONTEND_DIR`) : l'image Docker embarque le build du frontend
-    et l'API le monte en dernier, après ses propres routes. Nginx (Jalon 7) pourra servir les fichiers
-    statiques directement ; la variable vide désactive le montage. Le routage se fait par fragment
-    (`#/view/<slug>`) : aucune réécriture d'URL côté serveur.
+47. **Application web** : le routage se fait par fragment (`#/view/<slug>`), sans réécriture d'URL côté
+    serveur. En production c'est Nginx qui sert les fichiers (voir 54) ; l'API sait aussi monter un frontend
+    compilé (`FRONTEND_DIR`, vide par défaut) pour le développement et les tests sans Nginx.
 48. **Arborescence des points** : `GET /points/tree?path=` renvoie les dossiers du niveau (avec leur
     nombre de points) et les points de ce niveau ; les points sans chemin sont regroupés sous
     « (sans chemin) ». Le sélecteur de l'éditeur s'en sert, ou bascule sur la recherche si l'on tape.
 49. **Tests Playwright** : exécutés dans le job CI `stack`, sur la stack Docker réelle et le simulateur,
     en série (un seul simulateur partagé). Chaque scénario crée ses propres synoptiques et les supprime.
     Le rapport `github` annote les échecs ; captures et traces sont déposées en artefact.
+
+## Jalon 7
+
+50. **Verrouillage de compte** : compteurs dans Redis (pas de migration, expiration native). 5 échecs en
+    15 minutes verrouillent le login 15 minutes ; pendant ce temps le bon mot de passe est refusé aussi
+    (429 avec `Retry-After`). La clé est le login saisi en minuscules, qu'il existe ou non : un compte
+    inexistant se verrouille comme un vrai, on ne révèle rien. Une connexion réussie remet le compteur à zéro.
+    Contrepartie assumée : quiconque connaît un login peut le bloquer 15 minutes ; un administrateur peut lever
+    le verrou (Administration, ou `redis-cli del auth.lock.<login>`), et Nginx limite chaque adresse à
+    60 tentatives par minute. Si Redis est injoignable, la protection est suspendue et l'erreur journalisée
+    plutôt que d'interdire toute connexion (sans Redis, le temps réel est de toute façon à l'arrêt).
+51. **Sessions et mot de passe** : les jetons portent une empreinte du mot de passe courant ; changer le mot
+    de passe (par un admin ou `create-user --update`) invalide toutes les sessions ouvertes du compte, y
+    compris le renouvellement. Désactiver un compte coupe déjà l'accès à la requête suivante (rôle relu en base).
+52. **Utilisateurs (`/users`, `/roles`)** : réservés aux admin. Login de 1 à 64 caractères (lettres,
+    chiffres, `.` `_` `@` `-`), mot de passe de 10 à 256 caractères. Un admin ne peut ni se rétrograder, ni se
+    désactiver, ni se supprimer ; il reste toujours un administrateur actif. Suppression autorisée (l'audit
+    conserve la trace, l'auteur devient anonyme). Pas de courriel ni de politique de complexité : la longueur
+    est le seul critère. Pas d'authentification à deux facteurs (hors périmètre v1).
+53. **`POST /discovery/run`** : demande asynchrone (202) publiée sur Redis, exécutée aussitôt par le collecteur
+    (l'attente d'intervalle est interrompue). 503 si aucun collecteur n'écoute. Le résultat se lit dans
+    `/devices`. Une relance pendant une découverte en cours en déclenche une seconde à la suite.
+54. **Nginx** : seul point d'entrée web (80 → 301 vers 443). Il sert le frontend compilé et relaie `/api` et le
+    WebSocket ; l'API n'a plus de port publié (elle n'est plus que sur le réseau `back`). Pour développer
+    contre la pile Docker : `API_TARGET=https://localhost npm run dev`. L'adresse de l'API est résolue à chaque
+    requête (résolveur Docker) : Nginx démarre même si l'API est arrêtée et la retrouve après un redémarrage.
+    En-têtes : HSTS un an (sans `includeSubDomains` ni preload, plus prudent sur un nom partagé), CSP stricte,
+    `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Permissions-Policy`, COOP/CORP.
+    La CSP garde `style-src 'unsafe-inline'` : les widgets posent des styles calculés (un test Playwright
+    le confirme : sans, l'interface casse) ; `script-src` reste `'self'` sans exception. TLS 1.2 minimum.
+    L'API fait confiance à `X-Forwarded-For` (`--forwarded-allow-ips '*'`) parce que seul Nginx l'atteint, ce
+    qui donne la vraie adresse cliente à l'audit.
+55. **Certificats** : `deploy/gen-cert.sh` produit un certificat auto-signé pour les essais. En production,
+    l'exploitant fournit `fullchain.pem` et `privkey.pem` (autorité interne ou Let's Encrypt) et redémarre
+    Nginx après chaque renouvellement ; l'automatisation d'ACME n'est pas incluse.
+56. **Sauvegarde** : `pg_dump -Fc` quotidien à 02:30 (minuteur systemd, rattrapé si le serveur était éteint) dans
+    `/var/backups/supervisor`, rétention 14 jours, archive relue avant d'être conservée, rotation seulement après
+    succès. La copie hors du serveur reste à la charge de l'exploitant, comme `.env`, `config/` et les
+    certificats (hors base). Redis n'est pas sauvegardé (bus temps réel, rien de durable). La restauration
+    (`deploy/restore.sh`) est destructive, demande confirmation, suit la procédure TimescaleDB et contrôle la
+    cohérence ; elle tolère les avertissements bénins de `pg_restore` (extension déjà présente) et échoue si le
+    contrôle final n'est pas bon. Le cycle sauvegarde → sinistre → restauration est rejoué en CI.
+57. **Démarrage** : `supervisor.service` est un service `oneshot` qui lance `docker compose up -d --wait` ;
+    la reprise après coupure repose surtout sur `restart: unless-stopped` (Docker relance les conteneurs sans
+    attendre systemd). Un démarrage désordonné se corrige seul : api, collecteur et moteur d'alarmes échouent
+    tant que la base n'est pas prête et sont relancés. La CI redémarre le moteur Docker et vérifie la reprise
+    (API joignable en moins de 150 s, données et comptes intacts, acquisition reprise).
+58. **Documentation de l'API** : `docs/API.md` est générée (`python -m app.api.apidoc`) et un test échoue si
+    elle est périmée. Le rôle affiché est lu dans les dépendances des routes ; la route d'écriture, qui
+    contrôle son rôle dans le handler pour journaliser les refus, le déclare avec `checked_in_handler`. Un test
+    liste toutes les routes et exige une authentification partout, sauf connexion, déconnexion, renouvellement
+    et `/health`.
+59. **Journal d'audit** : le filtre `action` de `GET /audit` est un préfixe (`user.` pour tous les événements de
+    comptes) ; une valeur exacte reste valable.
+60. **Non couvert** (hors périmètre v1 ou à décider) : redis sans mot de passe (il n'écoute que sur 127.0.0.1 et
+    le réseau interne Docker ; ajouter `requirepass` si d'autres services tournent sur le serveur), alerte
+    automatique sur échec de sauvegarde (le journal systemd la conserve), haute disponibilité et réplication,
+    envoi des logs vers un collecteur central, liste blanche d'adresses IP.

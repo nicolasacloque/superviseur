@@ -29,6 +29,7 @@ from tests.api_harness import (
     make_settings,
     make_user,
     running_api,
+    stamp_of,
 )
 from tests.harness import Harness
 
@@ -326,7 +327,8 @@ async def test_websocket_requires_a_valid_session_and_closes_when_the_token_expi
         async with connect(live.api.ws_url, additional_headers={"Cookie": "access_token=faux"}):
             pass
 
-    short_lived = create_token(JWT_SECRET, user_id, "access", timedelta(seconds=2))
+    stamp = await stamp_of(live.sessions, user_id)
+    short_lived = create_token(JWT_SECRET, user_id, "access", timedelta(seconds=2), stamp=stamp)
     async with connect(
         live.api.ws_url, additional_headers={"Cookie": f"access_token={short_lived}"}
     ) as ws:

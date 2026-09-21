@@ -20,6 +20,7 @@ from tests.api_harness import (
     make_user,
     running_api,
     seed_points,
+    stamp_of,
 )
 from tests.conftest import TEST_DATABASE_URL
 
@@ -109,7 +110,8 @@ async def test_invalid_expired_and_wrong_type_tokens_are_refused(
     expired = create_token(JWT_SECRET, user_id, "access", timedelta(seconds=-5))
     forged = create_token("un-autre-secret-" + "y" * 32, user_id, "access", timedelta(minutes=5))
     refresh_as_access = create_token(JWT_SECRET, user_id, "refresh", timedelta(minutes=5))
-    valid = create_token(JWT_SECRET, user_id, "access", timedelta(minutes=5))
+    stamp = await stamp_of(sessions, user_id)
+    valid = create_token(JWT_SECRET, user_id, "access", timedelta(minutes=5), stamp=stamp)
     async with api.client() as client:
         for token, expected in [
             (expired, 401),
@@ -206,3 +208,95 @@ async def test_cli_creates_users_who_can_log_in(
         )
     assert old.status_code == 401
     assert new.status_code == 200 and new.json()["role"] == "engineer"
+
+
+async def test_five_failures_lock_the_account_even_against_the_right_password(
+    api: Any, sessions: async_sessionmaker[AsyncSession]
+) -> None:
+    await make_user(sessions, "erin", "operator")
+    async with api.client() as client:
+        for _ in range(4):
+            wrong = await client.post("/auth/login", json={"login": "erin", "password": "faux"})
+            assert wrong.status_code == 401
+        fifth = await client.post("/auth/login", json={"login": "erin", "password": "faux"})
+        assert fifth.status_code == 401  # l'échec qui déclenche le verrou reste un 401
+        # Verrouillé : le bon mot de passe est refusé aussi, avec le délai d'attente.
+        locked = await client.post("/auth/login", json={"login": "erin", "password": PASSWORD})
+        assert locked.status_code == 429
+        assert 0 < int(locked.headers["retry-after"]) <= 900
+        assert "set-cookie" not in locked.headers
+        # Un autre compte n'est pas touché.
+        await make_user(sessions, "frank", "operator")
+        other = await client.post("/auth/login", json={"login": "frank", "password": PASSWORD})
+        assert other.status_code == 200
+    assert len(await audit_rows(sessions, "auth.lockout")) == 1
+    results = [row.after["result"] for row in await audit_rows(sessions, "auth.login") if row.after]
+    assert results.count("verrouillé") == 1 and results.count("échec") == 5
+
+
+async def test_unknown_logins_lock_too_so_nothing_is_revealed(
+    api: Any, sessions: async_sessionmaker[AsyncSession]
+) -> None:
+    async with api.client() as client:
+        codes = [
+            (
+                await client.post("/auth/login", json={"login": "fantome", "password": "x"})
+            ).status_code
+            for _ in range(6)
+        ]
+    assert codes == [401, 401, 401, 401, 401, 429]
+
+
+async def test_a_success_resets_the_failure_counter(
+    api: Any, sessions: async_sessionmaker[AsyncSession]
+) -> None:
+    await make_user(sessions, "gina", "viewer")
+    async with api.client() as client:
+        for _ in range(4):
+            await client.post("/auth/login", json={"login": "gina", "password": "faux"})
+        assert (
+            await client.post("/auth/login", json={"login": "gina", "password": PASSWORD})
+        ).status_code == 200
+        for _ in range(4):
+            await client.post("/auth/login", json={"login": "gina", "password": "faux"})
+        # 4 + succès + 4 : jamais 5 d'affilée, donc pas de verrou.
+        assert (
+            await client.post("/auth/login", json={"login": "gina", "password": PASSWORD})
+        ).status_code == 200
+
+
+async def test_lock_is_case_insensitive_and_expires(
+    db_engine: AsyncEngine, redis: Any, sessions: async_sessionmaker[AsyncSession]
+) -> None:
+    await make_user(sessions, "hugo", "viewer")
+    short = make_settings(login_lock_s=1)
+    async with running_api(db_engine, redis, short) as api, api.client() as client:
+        for login in ("hugo", "HUGO", "Hugo", "hugo", "hUGO"):
+            await client.post("/auth/login", json={"login": login, "password": "faux"})
+        locked = await client.post("/auth/login", json={"login": "hugo", "password": PASSWORD})
+        assert locked.status_code == 429
+        await redis.expire("auth.lock.hugo", 1)
+        import asyncio
+
+        await asyncio.sleep(1.2)
+        assert (
+            await client.post("/auth/login", json={"login": "hugo", "password": PASSWORD})
+        ).status_code == 200
+
+
+async def test_password_change_invalidates_existing_sessions(
+    api: Any, sessions: async_sessionmaker[AsyncSession]
+) -> None:
+    from app.auth.passwords import hash_password
+
+    user_id = await make_user(sessions, "iris", "operator")
+    async with logged_in(api, "iris") as client:
+        assert (await client.get("/auth/me")).status_code == 200
+        async with sessions() as session, session.begin():
+            await session.execute(
+                update(User)
+                .where(User.id == user_id)
+                .values(password_hash=hash_password("autre-chose-123"))
+            )
+        assert (await client.get("/auth/me")).status_code == 401
+        assert (await client.post("/auth/refresh")).status_code == 401

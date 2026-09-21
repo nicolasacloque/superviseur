@@ -41,6 +41,11 @@ class Settings(BaseSettings):
 
     # Authentification et écriture (section 11).
     cookie_secure: bool = True
+    # Verrouillage temporaire d'un login : `login_max_failures` échecs en `login_window_s` secondes
+    # le bloquent pendant `login_lock_s` secondes.
+    login_max_failures: int = 5
+    login_window_s: int = 900
+    login_lock_s: int = 900
     access_token_minutes: int = 15
     refresh_token_days: int = 7
     # Délai d'attente de la réponse du collecteur à une écriture de consigne.

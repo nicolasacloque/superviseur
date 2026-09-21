@@ -14,6 +14,8 @@ CHANNEL_POINT_CONFIG = "point.config"
 CHANNEL_BACNET_EVENT = "bacnet.event"
 # Règles d'alarme créées, modifiées ou supprimées : le moteur les recharge.
 CHANNEL_ALARM_RULES = "alarm.rules"
+# Relance manuelle de la découverte (POST /discovery/run) : le collecteur l'exécute aussitôt.
+CHANNEL_DISCOVERY_RUN = "discovery.run"
 # Commandes d'acquittement (stream avec accusé de traitement, comme les écritures).
 STREAM_ALARM_CMD = "cmd.alarm"
 ALARM_GROUP = "alarms"

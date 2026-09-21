@@ -12,8 +12,9 @@ from fastapi.requests import HTTPConnection
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.auth.lockout import LoginGuard
 from app.auth.permissions import has_role
-from app.auth.tokens import TokenError, decode_token
+from app.auth.tokens import TokenError, decode_token, password_stamp
 from app.common.config import Settings
 from app.common.models import RoleName
 from app.db.models import Role, User
@@ -36,6 +37,16 @@ def get_redis(conn: HTTPConnection) -> Any:
     return conn.app.state.redis
 
 
+def get_login_guard(conn: HTTPConnection) -> LoginGuard:
+    settings = cast(Settings, conn.app.state.settings)
+    return LoginGuard(
+        conn.app.state.redis,
+        max_failures=settings.login_max_failures,
+        window_s=settings.login_window_s,
+        lock_s=settings.login_lock_s,
+    )
+
+
 def get_sessions(conn: HTTPConnection) -> async_sessionmaker[AsyncSession]:
     return cast("async_sessionmaker[AsyncSession]", conn.app.state.sessions)
 
@@ -50,6 +61,7 @@ async def get_session(
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 RedisDep = Annotated[Any, Depends(get_redis)]
+LoginGuardDep = Annotated[LoginGuard, Depends(get_login_guard)]
 
 
 def jwt_secret(settings: Settings) -> str:
@@ -67,18 +79,29 @@ class CurrentUser:
     id: uuid.UUID
     login: str
     role: str
+    stamp: str = ""
 
 
-async def load_user(session: AsyncSession, user_id: uuid.UUID) -> CurrentUser | None:
-    """Recharge l'utilisateur en base : un compte désactivé perd l'accès immédiatement."""
+async def load_user(
+    session: AsyncSession, user_id: uuid.UUID, stamp: str | None = None
+) -> CurrentUser | None:
+    """Recharge l'utilisateur en base : un compte désactivé perd l'accès immédiatement.
+
+    Avec `stamp` (celui du jeton), un jeton émis avant un changement de mot de passe est refusé.
+    """
     row = (
         await session.execute(
-            select(User.id, User.login, Role.name)
+            select(User.id, User.login, Role.name, User.password_hash)
             .join(Role, User.role_id == Role.id)
             .where(User.id == user_id, User.active.is_(True))
         )
     ).first()
-    return CurrentUser(row[0], row[1], row[2]) if row else None
+    if row is None:
+        return None
+    current = password_stamp(row[3])
+    if stamp is not None and stamp != current:
+        return None
+    return CurrentUser(row[0], row[1], row[2], current)
 
 
 async def current_user(request: Request, session: SessionDep, settings: SettingsDep) -> CurrentUser:
@@ -86,13 +109,23 @@ async def current_user(request: Request, session: SessionDep, settings: Settings
         claims = decode_token(jwt_secret(settings), request.cookies.get(ACCESS_COOKIE), "access")
     except TokenError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentification requise") from None
-    user = await load_user(session, claims.user_id)
+    user = await load_user(session, claims.user_id, claims.stamp)
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "authentification requise")
     return user
 
 
 UserDep = Annotated[CurrentUser, Depends(current_user)]
+
+
+def checked_in_handler(minimum: RoleName) -> Callable[[Any], Any]:
+    """Rôle qu'un handler contrôle lui-même (pour journaliser les refus) ; lu par apidoc."""
+
+    def mark(handler: Any) -> Any:
+        handler.required_role = minimum
+        return handler
+
+    return mark
 
 
 def require_role(minimum: RoleName) -> Callable[[CurrentUser], Awaitable[CurrentUser]]:

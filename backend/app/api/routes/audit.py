@@ -34,5 +34,5 @@ async def list_audit(
     if user is not None:
         query = query.where(AuditLog.user_id == user)
     if action:
-        query = query.where(AuditLog.action == action)
+        query = query.where(AuditLog.action.startswith(action, autoescape=True))
     return list((await session.scalars(query)).all())

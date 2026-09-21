@@ -165,3 +165,43 @@ export interface AlarmsApi {
   /** Acquitte une alarme ; retourne l'alarme mise à jour. */
   acknowledge(alarmId: string): Promise<Alarm>
 }
+
+export interface AdminUser {
+  id: string
+  login: string
+  role: string
+  active: boolean
+  locked: boolean
+}
+
+export interface RoleInfo {
+  name: string
+  level: number
+  description: string
+}
+
+export interface AuditEntry {
+  id: number
+  ts: string
+  user_id: string | null
+  action: string
+  target: string | null
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+  ip: string | null
+}
+
+export interface AuditQuery {
+  action?: string
+  limit?: number
+}
+
+export interface AdminApi {
+  users(): Promise<AdminUser[]>
+  roles(): Promise<RoleInfo[]>
+  createUser(login: string, password: string, role: string): Promise<AdminUser>
+  updateUser(id: string, patch: { role?: string; active?: boolean; password?: string }): Promise<AdminUser>
+  unlockUser(id: string): Promise<AdminUser>
+  deleteUser(id: string): Promise<void>
+  audit(query?: AuditQuery): Promise<AuditEntry[]>
+}

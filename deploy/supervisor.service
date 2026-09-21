@@ -1,0 +1,22 @@
+# Démarre la pile Docker Compose au démarrage du serveur et l'arrête proprement à l'extinction.
+# Installation : deploy/install-systemd.sh (adapte WorkingDirectory à l'emplacement du dépôt).
+[Unit]
+Description=Superviseur BACnet/IP (Docker Compose)
+Documentation=file:///opt/supervisor/docs/EXPLOITATION.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/supervisor
+# --wait : le service n'est déclaré démarré que lorsque tous les healthchecks sont verts.
+ExecStart=/usr/bin/docker compose up -d --wait --wait-timeout 240
+ExecReload=/usr/bin/docker compose up -d --wait --wait-timeout 240
+ExecStop=/usr/bin/docker compose stop
+TimeoutStartSec=300
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

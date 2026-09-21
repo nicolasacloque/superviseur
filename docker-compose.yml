@@ -1,5 +1,6 @@
-# Jalons 1-6 : db, redis, api (sert aussi le frontend), collector, alarms (+ simulateur avec `--profile sim`).
-# Le service nginx arrive au Jalon 7.
+# db, redis, api, collector, alarms, nginx (+ simulateur avec `--profile sim`).
+# Nginx (HTTPS) est le seul point d'entrée web : l'api n'est joignable que sur le réseau interne.
+# Certificat : deploy/gen-cert.sh (auto-signé) ou vos fichiers dans deploy/certs/.
 # Les mots de passe viennent du fichier .env (copier .env.example) ; rien n'est en dur ici.
 
 x-restart: &restart
@@ -42,9 +43,7 @@ services:
 
   api:
     <<: *restart
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+    build: ./backend
     # Les migrations sont appliquées avant le démarrage de l'API.
     command:
       - sh
@@ -53,12 +52,15 @@ services:
         alembic upgrade head &&
         exec uvicorn app.api.main:app --host 0.0.0.0 --port 8000
         --ws-ping-interval 30 --ws-ping-timeout 30
+        --proxy-headers --forwarded-allow-ips '*'
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: ${JWT_SECRET:?voir .env.example (openssl rand -hex 32)}
       # Cookies Secure : à passer à false seulement pour un essai en HTTP sur un poste local.
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      LOGIN_MAX_FAILURES: ${LOGIN_MAX_FAILURES:-5}
+      LOGIN_LOCK_S: ${LOGIN_LOCK_S:-900}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       RETENTION_DAYS: ${RETENTION_DAYS:-730}
       SMTP_HOST: ${SMTP_HOST:-}
@@ -70,11 +72,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Publie uniquement en local en attendant Nginx + TLS (Jalon 7).
-    ports:
-      - "127.0.0.1:8000:8000"
-    # Le réseau back est interne : api doit aussi être sur front pour publier son port.
-    networks: [front, back]
+    # Aucun port publié : seul nginx (réseau back) l'atteint. `--forwarded-allow-ips '*'` est sûr
+    # pour cette raison : personne d'autre ne peut envoyer d'en-tête X-Forwarded-For à l'api.
+    networks: [back]
     healthcheck:
       test:
         - CMD
@@ -86,12 +86,35 @@ services:
       retries: 6
       start_period: 30s
 
-  # Seul composant qui parle BACnet. Réseau hôte : il reçoit les broadcasts du bon sous-réseau.
-  collector:
+  # Point d'entrée web : HTTPS, en-têtes de sécurité, frontend statique, relais de l'api et du WebSocket.
+  nginx:
     <<: *restart
     build:
       context: .
-      dockerfile: backend/Dockerfile
+      dockerfile: deploy/nginx/Dockerfile
+    environment:
+      # Port HTTPS non standard : HTTPS_PORT=8443 et HTTPS_PORT_SUFFIX=:8443 (pour la redirection).
+      HTTPS_PORT_SUFFIX: ${HTTPS_PORT_SUFFIX:-}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ${TLS_CERT_DIR:-./deploy/certs}:/etc/nginx/certs:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [front, back]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/nginx-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  # Seul composant qui parle BACnet. Réseau hôte : il reçoit les broadcasts du bon sous-réseau.
+  collector:
+    <<: *restart
+    build: ./backend
     command: ["python", "-m", "app.collector.main"]
     network_mode: host
     environment:
@@ -119,9 +142,7 @@ services:
   # Moteur d'alarmes : règles, machine à états, notifications email et webhook.
   alarms:
     <<: *restart
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+    build: ./backend
     command: ["python", "-m", "app.alarms.main"]
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}

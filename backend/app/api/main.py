@@ -15,13 +15,28 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.api.deps import jwt_secret
 from app.api.health import router as health_router
-from app.api.routes import alarms, audit, auth, devices, points, synoptics, write, ws
+from app.api.routes import (
+    alarms,
+    audit,
+    auth,
+    devices,
+    discovery,
+    points,
+    synoptics,
+    users,
+    write,
+    ws,
+)
 from app.common.config import Settings, get_settings
 from app.common.logging import configure_logging
 from app.db.session import create_engine, create_session_factory
 from app.db.timescale import has_timescale, sync_retention
 
 log = logging.getLogger(__name__)
+
+# Modules de routes protégés par rôle ; `health` (public) et `ws` (WebSocket) sont montés à part.
+API_PREFIX = "/api/v1"
+API_MODULES = (auth, devices, discovery, points, write, alarms, synoptics, users, audit)
 
 
 def create_app(
@@ -63,8 +78,8 @@ def create_app(
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
     )
-    api = APIRouter(prefix="/api/v1")
-    for module in (auth, devices, points, write, alarms, synoptics, audit):
+    api = APIRouter(prefix=API_PREFIX)
+    for module in API_MODULES:
         api.include_router(module.router)
     api.include_router(health_router)
     api.include_router(ws.router)

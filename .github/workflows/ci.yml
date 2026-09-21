@@ -118,12 +118,15 @@ jobs:
         run: |
           cp .env.example .env
           echo "JWT_SECRET=$(openssl rand -hex 32)" >> .env
-          echo "COOKIE_SECURE=false" >> .env
           echo "COLLECTOR_CONFIG=/config/collector.sim.yaml" >> .env
+          # Cookies Secure (défaut) : tout passe par Nginx en HTTPS, comme en production.
+          deploy/gen-cert.sh localhost
+          # Certificat auto-signé : curl l'accepte pour toutes les étapes suivantes.
+          echo insecure > ~/.curlrc
       - name: Démarrer la stack avec le simulateur
         run: docker compose --profile sim up -d --build --wait --wait-timeout 240
       - name: Vérifier /health
-        run: curl -fsS http://127.0.0.1:8000/health
+        run: curl -fsS https://127.0.0.1/health
       - name: Attendre l'import des 2000 points
         run: |
           query() { docker compose exec -T db psql -U supervisor -d supervisor -tAc "$1"; }
@@ -142,7 +145,7 @@ jobs:
           echo "$out" | grep -q 'pmessage'
       - name: "API - connexion, lecture, écriture avec priorité, relâchement, refus"
         run: |
-          B=http://127.0.0.1:8000/api/v1
+          B=https://127.0.0.1/api/v1
           PW=mot-de-passe-ci-123
           for spec in "ci-op operator" "ci-viewer viewer"; do
             set -- $spec
@@ -168,7 +171,7 @@ jobs:
           test "$(write ci-op '{"value":null,"priority":8}')" = 200
       - name: "Alarmes - règle, déclenchement, acquittement"
         run: |
-          B=http://127.0.0.1:8000/api/v1
+          B=https://127.0.0.1/api/v1
           PW=mot-de-passe-ci-123
           docker compose exec -T -e NEW_USER_PASSWORD=$PW api python -m app.auth.cli create-user ci-eng --role engineer
           login() { curl -fsS -c "$1.jar" -H 'Content-Type: application/json' \
@@ -196,7 +199,7 @@ jobs:
           curl -fsS -b ci-eng.jar -X PATCH -H 'Content-Type: application/json' -d '{"enabled":false}' $B/alarm-rules/$RULE > /dev/null
       - name: Synoptiques - préparer les comptes de test
         run: |
-          for spec in "e2e-engineer engineer" "e2e-operator operator" "e2e-viewer viewer"; do
+          for spec in "e2e-engineer engineer" "e2e-operator operator" "e2e-viewer viewer" "e2e-admin admin"; do
             set -- $spec
             docker compose exec -T -e NEW_USER_PASSWORD=mot-de-passe-e2e-123 api python -m app.auth.cli create-user "$1" --role "$2"
           done
@@ -213,6 +216,8 @@ jobs:
       - name: Synoptiques - tests Playwright (créer, live, switch, versions, écrans)
         # Le rapport `github` annote directement les échecs (fichier, ligne, message).
         working-directory: e2e
+        env:
+          E2E_BASE_URL: https://127.0.0.1
         run: npx playwright test
       - name: Synoptiques - captures et traces en cas d'échec
         if: failure()
@@ -221,13 +226,91 @@ jobs:
           name: playwright-results
           path: e2e/test-results
           if-no-files-found: ignore
+      - name: Audit de sécurité de base (en-têtes, cookies, accès refusé, verrouillage, ports)
+        env:
+          INSECURE: "1"
+          SEC_LOGIN: e2e-viewer
+          SEC_PASSWORD: mot-de-passe-e2e-123
+        run: deploy/security-check.sh https://127.0.0.1 --docker
+      - name: Sauvegarde puis restauration (donnée témoin supprimée puis retrouvée)
+        run: |
+          B=https://127.0.0.1/api/v1
+          PW=mot-de-passe-e2e-123
+          query() { docker compose exec -T db psql -U supervisor -d supervisor -tAc "$1"; }
+          login() { curl -fsS -c "$1.jar" -H 'Content-Type: application/json' \
+            -d "{\"login\":\"$1\",\"password\":\"$PW\"}" $B/auth/login > /dev/null; }
+          login e2e-engineer
+          curl -fsS -b e2e-engineer.jar -H 'Content-Type: application/json' -o /dev/null \
+            -d '{"doc":{"schema":1,"name":"Temoin sauvegarde","canvas":{"width":800,"height":600,"background":"#0f172a","bg_image":null},"widgets":[],"links":[]}}' \
+            $B/synoptics
+          test "$(curl -s -o /dev/null -w '%{http_code}' -b e2e-engineer.jar $B/synoptics/temoin-sauvegarde)" = 200
+          users_before=$(query 'select count(*) from "user"')
+          points_before=$(query 'select count(*) from point')
+
+          export BACKUP_DIR="$RUNNER_TEMP/backups"
+          deploy/backup.sh
+          dump=$(ls "$BACKUP_DIR"/supervisor-*.dump | head -n 1)
+          test -s "$dump"
+
+          # Sinistre simulé : le témoin disparaît, et un compte est ajouté après la sauvegarde.
+          ID=$(curl -fsS -b e2e-engineer.jar $B/synoptics/temoin-sauvegarde | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          curl -fsS -b e2e-engineer.jar -X DELETE $B/synoptics/$ID
+          test "$(curl -s -o /dev/null -w '%{http_code}' -b e2e-engineer.jar $B/synoptics/temoin-sauvegarde)" = 404
+          docker compose exec -T -e NEW_USER_PASSWORD=$PW api python -m app.auth.cli create-user apres-sauvegarde --role viewer
+
+          deploy/restore.sh --yes "$dump"
+
+          login e2e-engineer
+          test "$(curl -s -o /dev/null -w '%{http_code}' -b e2e-engineer.jar $B/synoptics/temoin-sauvegarde)" = 200
+          after_user="select count(*) from \"user\" where login = 'apres-sauvegarde'"
+          test "$(query "$after_user")" = 0
+          test "$(query 'select count(*) from "user"')" = "$users_before"
+          test "$(query 'select count(*) from point')" = "$points_before"
+          test "$(query "select count(*) from timescaledb_information.hypertables where hypertable_name = 'sample'")" = 1
+          # L'acquisition reprend : la dernière valeur reçue est récente.
+          for i in $(seq 1 40); do
+            fresh=$(query "select count(*) from point_latest where ts > now() - interval '30 seconds'")
+            [ "${fresh:-0}" -gt 0 ] && break
+            sleep 3
+          done
+          test "${fresh:-0}" -gt 0
+      - name: Redémarrage complet du serveur, sans intervention (moteur Docker redémarré)
+        run: |
+          B=https://127.0.0.1/api/v1
+          PW=mot-de-passe-e2e-123
+          query() { docker compose exec -T db psql -U supervisor -d supervisor -tAc "$1"; }
+          points_before=$(query 'select count(*) from point')
+          start=$(date +%s)
+          sudo systemctl restart docker
+          # Aucune commande docker compose ici : la reprise doit venir des politiques de redémarrage.
+          up=0
+          for i in $(seq 1 100); do
+            if curl -fsS https://127.0.0.1/health > /dev/null 2>&1; then up=1; break; fi
+            sleep 3
+          done
+          elapsed=$(( $(date +%s) - start ))
+          echo "API de nouveau joignable après ${elapsed}s"
+          test "$up" = 1
+          test "$elapsed" -le 150
+          curl -fsS -c after.jar -H 'Content-Type: application/json' \
+            -d "{\"login\":\"e2e-engineer\",\"password\":\"$PW\"}" $B/auth/login > /dev/null
+          test "$(curl -s -o /dev/null -w '%{http_code}' -b after.jar $B/synoptics/temoin-sauvegarde)" = 200
+          test "$(query 'select count(*) from point')" = "$points_before"
+          # Le collecteur et le simulateur ont repris seuls : des valeurs fraîches arrivent.
+          for i in $(seq 1 60); do
+            fresh=$(query "select count(*) from point_latest where ts > now() - interval '30 seconds'" 2>/dev/null || echo 0)
+            [ "${fresh:-0}" -gt 0 ] && break
+            sleep 3
+          done
+          test "${fresh:-0}" -gt 0
+          docker compose --profile sim ps
       - name: Logs en cas d'échec
         if: failure()
         run: |
           docker compose --profile sim ps -a || true
           docker compose --profile sim logs --tail 200
           # Les 40 dernières lignes de chaque service en annotation, lisibles sans ouvrir les journaux.
-          for service in api alarms collector; do
+          for service in nginx api alarms collector db; do
             out=$(docker compose --profile sim logs --no-color --tail 40 "$service" 2>&1 | cut -c1-300 \
               | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
             echo "::error title=logs $service::${out}"
@@ -235,3 +318,31 @@ jobs:
       - name: Arrêter la stack
         if: always()
         run: docker compose --profile sim down -v
+
+  deploy:
+    # Scripts d'exploitation, unités systemd et configuration Nginx : vérifications sans lancer la stack.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck --severity=warning deploy/*.sh
+      - name: Logique des scripts (rotation, refus des sauvegardes invalides, certificat)
+        run: deploy/test-scripts.sh
+      - name: Unités systemd valides
+        run: |
+          # Les unités livrées supposent /opt/supervisor : on les adapte comme install-systemd.sh.
+          mkdir -p /tmp/units
+          for unit in supervisor.service supervisor-backup.service supervisor-backup.timer; do
+            sed "s#/opt/supervisor#$PWD#g" "deploy/$unit" > "/tmp/units/$unit"
+          done
+          systemd-analyze verify /tmp/units/supervisor.service /tmp/units/supervisor-backup.service /tmp/units/supervisor-backup.timer
+      - name: Configuration Nginx valide (nginx -t)
+        run: |
+          deploy/gen-cert.sh localhost /tmp/certs
+          export HTTPS_PORT_SUFFIX=
+          envsubst '${HTTPS_PORT_SUFFIX}' < deploy/nginx/supervisor.conf.template > /tmp/default.conf
+          docker run --rm --add-host api:127.0.0.1 \
+            -v /tmp/default.conf:/etc/nginx/conf.d/default.conf:ro \
+            -v "$PWD/deploy/nginx/security-headers.conf:/etc/nginx/snippets/security-headers.conf:ro" \
+            -v /tmp/certs:/etc/nginx/certs:ro \
+            nginx:1.27-alpine nginx -t

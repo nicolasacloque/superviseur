@@ -21,9 +21,10 @@ TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/supervis
 
 Frontend (depuis `frontend/`) : `npm ci && npm run typecheck && npm test`. Tests d'acceptation : `e2e/` (Playwright, stack + simulateur requis, voir README).
 
-Stack complète : `cp .env.example .env` puis `docker compose up -d --build --wait`.
+Stack complète : `cp .env.example .env`, `deploy/gen-cert.sh localhost`, puis `docker compose up -d --build --wait` (Nginx en HTTPS est le seul point d'entrée).
+Scripts d'exploitation (`deploy/`) : `deploy/test-scripts.sh` (sans Docker), `deploy/security-check.sh`, `backup.sh`, `restore.sh`. `docs/API.md` se régénère avec `cd backend && python -m app.api.apidoc > ../docs/API.md`.
 
 ## État
 
-Jalons 1 à 6 livrés (socle, simulateur + collecteur, API + WebSocket + écriture, historiques et widget `trend`, alarmes, synoptiques : éditeur, viewer, widgets, tests Playwright) ; le Jalon 7 (production) n'est pas commencé.
+Jalons 1 à 7 livrés (socle, simulateur + collecteur, API + WebSocket + écriture, historiques et widget `trend`, alarmes, synoptiques, production : Nginx + TLS, verrouillage de compte, utilisateurs, sauvegardes, systemd, audit de sécurité, documentation d'exploitation). Toute la spécification est implémentée ; le reste relève de `docs/QUESTIONS.md` (décision 60).
 Voir README.md et docs/QUESTIONS.md.

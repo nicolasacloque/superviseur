@@ -49,7 +49,7 @@ async def _authenticate(websocket: WebSocket) -> tuple[CurrentUser, TokenClaims]
     except TokenError:
         return None
     async with app.state.sessions() as session:
-        user = await load_user(session, claims.user_id)
+        user = await load_user(session, claims.user_id, claims.stamp)
     return (user, claims) if user else None
 
 

@@ -1,4 +1,9 @@
 import type {
+  AdminApi,
+  AdminUser,
+  AuditEntry,
+  AuditQuery,
+  RoleInfo,
   Alarm,
   AlarmPage,
   AlarmQuery,
@@ -31,7 +36,7 @@ export class ApiError extends Error {
 type Fetch = typeof fetch
 
 /** Client REST : cookies de session (HttpOnly), un renouvellement automatique sur 401. */
-export class ApiClient implements HistoryApi, AlarmsApi, PointsApi, WriteApi, SynopticsApi {
+export class ApiClient implements HistoryApi, AlarmsApi, PointsApi, WriteApi, SynopticsApi, AdminApi {
   constructor(
     private readonly base = '/api/v1',
     private readonly fetchImpl: Fetch = (input, init) => fetch(input, init),
@@ -141,6 +146,37 @@ export class ApiClient implements HistoryApi, AlarmsApi, PointsApi, WriteApi, Sy
 
   async restoreVersion(id: string, version: number): Promise<SynopticRecord> {
     return this.send<SynopticRecord>('POST', `/synoptics/${id}/restore/${version}`)
+  }
+
+  async users(): Promise<AdminUser[]> {
+    return this.get<AdminUser[]>('/users')
+  }
+
+  async roles(): Promise<RoleInfo[]> {
+    return this.get<RoleInfo[]>('/roles')
+  }
+
+  async createUser(login: string, password: string, role: string): Promise<AdminUser> {
+    return this.send<AdminUser>('POST', '/users', { login, password, role })
+  }
+
+  async updateUser(id: string, patch: { role?: string; active?: boolean; password?: string }): Promise<AdminUser> {
+    return this.send<AdminUser>('PATCH', `/users/${id}`, patch)
+  }
+
+  async unlockUser(id: string): Promise<AdminUser> {
+    return this.send<AdminUser>('POST', `/users/${id}/unlock`)
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    await this.send('DELETE', `/users/${id}`)
+  }
+
+  async audit(query: AuditQuery = {}): Promise<AuditEntry[]> {
+    const params = new URLSearchParams()
+    if (query.action) params.set('action', query.action)
+    if (query.limit) params.set('limit', String(query.limit))
+    return this.get<AuditEntry[]>(`/audit?${params}`)
   }
 
   /** Requête avec corps JSON ; un 401 déclenche un renouvellement de session puis un second essai. */

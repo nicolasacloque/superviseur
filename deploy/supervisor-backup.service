@@ -1,0 +1,11 @@
+[Unit]
+Description=Sauvegarde de la base du superviseur
+Requires=docker.service
+After=docker.service supervisor.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/supervisor
+Environment=BACKUP_DIR=/var/backups/supervisor
+Environment=KEEP_DAYS=14
+ExecStart=/opt/supervisor/deploy/backup.sh

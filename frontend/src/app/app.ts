@@ -1,17 +1,18 @@
 /** Coquille de l'application : session, routage, barre supérieure. */
 
 import { ApiError } from '../api/client'
-import type { LiveApi, SessionUser, SynopticRecord } from '../api/types'
+import type { AdminApi, LiveApi, SessionUser, SynopticRecord } from '../api/types'
 import { mountEditor, type EditorApi } from '../editor/editor'
 import { mountViewer } from '../viewer/viewer'
 import { dialogConfirm } from '../viewer/confirm'
 import { element } from '../widgets/base'
+import { mountAdmin } from './admin'
 import { mountList } from './list'
 import { mountLogin } from './login'
 import { hrefFor, parseRoute, type Route } from './router'
 import { injectAppStyles } from './styles'
 
-export interface AppApi extends EditorApi {
+export interface AppApi extends EditorApi, AdminApi {
   login(login: string, password: string): Promise<void>
   logout(): Promise<void>
   me(): Promise<SessionUser>
@@ -26,6 +27,7 @@ export interface AppDeps {
 }
 
 const ENGINEER_ROLES = new Set(['engineer', 'admin'])
+const ADMIN_ROLE = 'admin'
 
 export interface AppInstance {
   destroy(): void
@@ -72,6 +74,7 @@ export function mountApp(container: HTMLElement, deps: AppDeps): AppInstance {
     const header = element('header', 'app-bar')
     const heading = element('h1', '', title)
     header.append(heading, ...actions)
+    if (user?.role === ADMIN_ROLE) header.append(link('Administration', { name: 'admin' }))
     if (user) {
       header.append(element('span', 'who', `${user.login} (${user.role})`))
       const logout = element('button', '', 'Se déconnecter')
@@ -122,7 +125,11 @@ export function mountApp(container: HTMLElement, deps: AppDeps): AppInstance {
     if (mine !== generation) return
     clear()
     if (!signedIn) {
-      if (route.name !== 'login') where.hash = hrefFor({ name: 'login' })
+      if (route.name !== 'login') {
+        // Sans cela, le changement d'adresse recréerait le formulaire et effacerait la saisie en cours.
+        silentHash = hrefFor({ name: 'login' })
+        where.hash = silentHash
+      }
       const body = element('div', 'app-body')
       root.append(body)
       current = mountLogin(body, {
@@ -137,6 +144,22 @@ export function mountApp(container: HTMLElement, deps: AppDeps): AppInstance {
     }
     if (route.name === 'login') return go({ name: 'list' })
     const canEdit = ENGINEER_ROLES.has((user as SessionUser).role)
+
+    if (route.name === 'admin') {
+      root.append(bar('Administration', [link('← Synoptiques', { name: 'list' })]))
+      if ((user as SessionUser).role !== ADMIN_ROLE) {
+        root.append(element('p', 'app-note', 'L’administration est réservée aux administrateurs.'))
+        return
+      }
+      const body = element('div', 'app-body app-body--scroll')
+      root.append(body)
+      current = mountAdmin(body, {
+        api: deps.api,
+        currentUserId: (user as SessionUser).id,
+        confirm: dialogConfirm,
+      })
+      return
+    }
 
     if (route.name === 'list') {
       root.append(bar('Superviseur'))

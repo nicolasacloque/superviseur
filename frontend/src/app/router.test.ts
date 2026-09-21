@@ -6,6 +6,7 @@ describe('routeur', () => {
     ['', { name: 'list' }],
     ['#/', { name: 'list' }],
     ['#/login', { name: 'login' }],
+    ['#/admin', { name: 'admin' }],
     ['#/view/cta-1', { name: 'view', slug: 'cta-1' }],
     ['#/edit/cta-1', { name: 'edit', slug: 'cta-1' }],
     ['#/edit/new', { name: 'edit', slug: null }],
@@ -17,7 +18,7 @@ describe('routeur', () => {
   })
 
   it('les adresses font l\'aller-retour', () => {
-    for (const route of [{ name: 'list' }, { name: 'login' }, { name: 'view', slug: 'a b/é' }, { name: 'edit', slug: null }, { name: 'edit', slug: 'x' }] as const) {
+    for (const route of [{ name: 'list' }, { name: 'login' }, { name: 'admin' }, { name: 'view', slug: 'a b/é' }, { name: 'edit', slug: null }, { name: 'edit', slug: 'x' }] as const) {
       expect(parseRoute(hrefFor(route))).toEqual(route)
     }
   })

@@ -9,6 +9,9 @@ _hasher = PasswordHasher()  # argon2id par défaut
 _dummy_hash: str | None = None
 
 
+MIN_PASSWORD_LENGTH = 10
+
+
 def hash_password(password: str) -> str:
     return _hasher.hash(password)
 

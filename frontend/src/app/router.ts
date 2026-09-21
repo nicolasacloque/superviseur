@@ -3,6 +3,7 @@
 export type Route =
   | { name: 'login' }
   | { name: 'list' }
+  | { name: 'admin' }
   | { name: 'view'; slug: string }
   | { name: 'edit'; slug: string | null } // `null` : nouveau synoptique
 
@@ -18,6 +19,7 @@ export function parseRoute(hash: string): Route {
   }
   const [head, arg] = parts
   if (head === 'login') return { name: 'login' }
+  if (head === 'admin') return { name: 'admin' }
   if (head === 'view') {
     const slug = decode(arg)
     if (slug) return { name: 'view', slug }
@@ -36,6 +38,8 @@ export function hrefFor(route: Route): string {
       return '#/login'
     case 'list':
       return '#/'
+    case 'admin':
+      return '#/admin'
     case 'view':
       return `#/view/${encodeURIComponent(route.slug)}`
     case 'edit':

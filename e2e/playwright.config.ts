@@ -1,6 +1,6 @@
 import { defineConfig } from '@playwright/test'
 
-// Variables : E2E_BASE_URL (défaut http://127.0.0.1:8000), E2E_CHANNEL (ex. « chrome » pour utiliser
+// Variables : E2E_BASE_URL (défaut https://127.0.0.1, Nginx de la pile Docker), E2E_CHANNEL (ex. « chrome » pour utiliser
 // le Chrome installé plutôt que le Chromium de Playwright), identifiants dans tests/helpers.ts.
 const ci = Boolean(process.env.CI)
 
@@ -15,10 +15,12 @@ export default defineConfig({
   retries: ci ? 1 : 0,
   reporter: ci ? [['github'], ['list']] : [['list']],
   use: {
-    baseURL: process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8000',
+    baseURL: process.env.E2E_BASE_URL ?? 'https://127.0.0.1',
     channel: process.env.E2E_CHANNEL || undefined,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     locale: 'fr-FR',
+    // Certificat auto-signé de la stack d'essai (deploy/gen-cert.sh).
+    ignoreHTTPSErrors: true,
   },
 })
